@@ -1,0 +1,7 @@
+# Phase 1 ship gate (README §5 NFR4-NFR6, §17 Phase 1).
+# CI fails the PR if `eval.ci.compare` finds the run below these.
+top1_subheading: 0.85
+top3_subheading: 0.95
+top1_chapter: 0.95
+mrr: 0.85
+p95_ms: 1000

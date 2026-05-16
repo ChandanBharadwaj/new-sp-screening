@@ -1,0 +1,44 @@
+name: eval-gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: screening
+          POSTGRES_PASSWORD: screening
+          POSTGRES_DB: screening
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U screening"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql+asyncpg://screening:screening@localhost:5432/screening
+      DATABASE_URL_SYNC: postgresql://screening:screening@localhost:5432/screening
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install .
+      - run: alembic upgrade head
+      - name: Run eval — baseline
+        run: |
+          mkdir -p eval/reports
+          python -m eval.runners.run_eval --classifier baseline_noop --split test --report eval/reports/baseline.json
+      - name: CI gate (compares baseline run against thresholds — expected to fail until Phase 1 pipeline is wired)
+        continue-on-error: true
+        run: python -m eval.ci.compare --report eval/reports/baseline.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval/reports/

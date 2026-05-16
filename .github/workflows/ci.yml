@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check app eval
+
+  alembic:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: screening
+          POSTGRES_PASSWORD: screening
+          POSTGRES_DB: screening
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U screening"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install .
+      - env:
+          DATABASE_URL: postgresql+asyncpg://screening:screening@localhost:5432/screening
+          DATABASE_URL_SYNC: postgresql://screening:screening@localhost:5432/screening
+        run: alembic upgrade head

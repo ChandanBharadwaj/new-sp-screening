@@ -1,0 +1,48 @@
+[project]
+name = "commodity-screening"
+version = "0.1.0"
+description = "NLP-driven commodity screening engine (HS classification + sanctions + rules)"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "pgvector>=0.3.6",
+    "alembic>=1.14",
+    "lightgbm>=4.5",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "sentence-transformers>=3.3",
+    "transformers>=4.46",
+    "torch>=2.5",
+    "gliner>=0.2.13",
+    "arq>=0.26",
+    "redis>=5.2",
+    "structlog>=24.4",
+    "httpx>=0.28",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.3",
+    "python-multipart>=0.0.17",
+    "pyyaml>=6.0.2",
+    "tenacity>=9.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "eval*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]

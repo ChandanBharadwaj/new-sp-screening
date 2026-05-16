@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: screening
+      POSTGRES_PASSWORD: screening
+      POSTGRES_DB: screening
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U screening -d screening"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://screening:screening@postgres:5432/screening
+      DATABASE_URL_SYNC: postgresql://screening:screening@postgres:5432/screening
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://screening:screening@postgres:5432/screening
+      DATABASE_URL_SYNC: postgresql://screening:screening@postgres:5432/screening
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+    command: arq app.workers.arq_app.WorkerSettings
+
+volumes:
+  pgdata:

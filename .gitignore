@@ -1,0 +1,33 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.env
+.env.local
+.idea/
+.vscode/
+*.egg-info/
+build/
+dist/
+
+# Model artifacts and data caches
+artifacts/*.txt
+artifacts/*.bin
+data/cross_raw/
+data/hts/
+data/schedule_b/
+*.cache
+
+# Eval reports
+eval/reports/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
