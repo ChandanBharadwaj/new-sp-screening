@@ -63,8 +63,14 @@ def batches(items: list, size: int = 64):
         yield items[i : i + size]
 
 
-def lazy_embedder():
-    """Import sentence-transformers lazily so refdata scripts can be imported without the model present."""
-    from app.models.embedder import Embedder
+async def mark_progress(db: AsyncSession, run: RefdataRun, rows: int) -> None:
+    """Update RefdataRun.rows_upserted mid-run so the UI can show progress."""
+    run.rows_upserted = rows
+    await db.commit()
 
-    return Embedder()
+
+def lazy_embedder():
+    """Return the shared singleton Embedder (loaded once at app/worker startup)."""
+    from app.models.registry import get_models
+
+    return get_models().embedder

@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 
 type SystemStatus = {
@@ -29,6 +30,21 @@ type RefdataSource = {
   };
   row_count: number;
 };
+
+function RefdataRunButton({ source }: { source: string }) {
+  const qc = useQueryClient();
+  const run = useMutation({
+    mutationFn: () => api.post("/api/v1/admin/refdata/" + source + "/run", {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["status", "refdata"] }),
+  });
+  return (
+    <button
+      className="text-xs bg-slate-900 text-white px-2 py-1 rounded hover:bg-slate-700 disabled:opacity-50"
+      disabled={run.isPending}
+      onClick={() => run.mutate()}
+    >{run.isPending ? "…" : "Run"}</button>
+  );
+}
 
 type EvalRunRow = {
   id: number;
@@ -138,10 +154,10 @@ export default function Status() {
           <p className="text-slate-500">Loading…</p>
         ) : (
           <>
-            <div className="mb-3 text-xs text-slate-500">
-              hs_code total: <span className="font-mono">{refdata.data.totals.hs_code}</span>
-              {" · "}
-              hs_training_example total: <span className="font-mono">{refdata.data.totals.hs_training_example}</span>
+            <div className="mb-3 text-xs text-slate-500 flex items-center gap-3">
+              <span>hs_code total: <span className="font-mono">{refdata.data.totals.hs_code}</span></span>
+              <span>hs_training_example total: <span className="font-mono">{refdata.data.totals.hs_training_example}</span></span>
+              <Link className="ml-auto text-blue-700 hover:underline" to="/admin">Manage in Admin →</Link>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -150,7 +166,7 @@ export default function Status() {
                   <th>Status</th>
                   <th>Last ran</th>
                   <th>Rows</th>
-                  <th>Re-run command</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -161,20 +177,14 @@ export default function Status() {
                       <span className={
                         "px-2 py-0.5 rounded text-xs " +
                         (s.last_run.status === "success" ? "bg-emerald-100 text-emerald-800" :
-                         s.last_run.status === "running" ? "bg-blue-100 text-blue-800" :
+                         s.last_run.status === "running" ? "bg-blue-100 text-blue-800 animate-pulse" :
                          s.last_run.status === "failed" ? "bg-red-100 text-red-800" :
                          "bg-slate-100 text-slate-600")
                       }>{s.last_run.status}</span>
                     </td>
                     <td className="text-slate-600">{s.last_run.finished_at ? new Date(s.last_run.finished_at).toLocaleString() : "—"}</td>
-                    <td className="font-mono">{s.row_count}</td>
-                    <td>
-                      <button
-                        className="text-xs font-mono bg-slate-100 px-2 py-1 rounded hover:bg-slate-200"
-                        onClick={() => navigator.clipboard.writeText(s.command)}
-                        title="Copy to clipboard"
-                      >{s.command}</button>
-                    </td>
+                    <td className="font-mono">{s.row_count}{s.last_run.status === "running" && s.last_run.rows_upserted ? ` (${s.last_run.rows_upserted}…)` : ""}</td>
+                    <td><RefdataRunButton source={s.source} /></td>
                   </tr>
                 ))}
               </tbody>

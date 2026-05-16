@@ -94,7 +94,7 @@ async def main_async(ccl_file: Path, crosswalk_file: Path | None) -> None:
         db,
         run,
     ):
-        counts = await upsert_sanctioned_commodities(db, items, source="BIS_CCL")
+        counts = await upsert_sanctioned_commodities(db, items, source="BIS_CCL", run=run)
         run.rows_upserted = counts["sanctioned"]
         run.notes = (run.notes or "") + f" | rules={counts['rules']}"
 

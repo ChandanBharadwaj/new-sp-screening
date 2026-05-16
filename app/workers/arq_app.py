@@ -6,6 +6,7 @@ from app.config import settings
 from app.models.registry import load_models
 from app.telemetry import configure_logging, log
 from app.workers.batch_screen import screen_one
+from app.workers.refdata_jobs import run_refdata
 
 
 async def startup(ctx: dict) -> None:
@@ -20,7 +21,7 @@ async def shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [screen_one]
+    functions = [screen_one, run_refdata]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.redis_url)

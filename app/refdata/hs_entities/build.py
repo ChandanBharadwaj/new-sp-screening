@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.db.models import HsCode, HsEntityIndex
 from app.models.ner_model import NerModel
-from app.refdata.common import with_run_logging
+from app.refdata.common import mark_progress, with_run_logging
 from app.telemetry import configure_logging, log
 
 
@@ -74,7 +74,7 @@ async def main_async(level: int | None, limit: int | None) -> None:
                     await db.execute(stmt2)
                     upserted += 1
             if (idx + 1) % 200 == 0:
-                await db.commit()
+                await mark_progress(db, run, upserted)
                 log.info("hs_entities.progress", processed=idx + 1, total=len(rows), upserted=upserted)
         await db.commit()
         run.rows_upserted = upserted

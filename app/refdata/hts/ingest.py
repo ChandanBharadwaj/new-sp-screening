@@ -22,7 +22,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import HsCode
-from app.refdata.common import batches, lazy_embedder, update_tsv_for_table, with_run_logging
+from app.refdata.common import (
+    batches,
+    lazy_embedder,
+    mark_progress,
+    update_tsv_for_table,
+    with_run_logging,
+)
 from app.telemetry import log
 
 HTS_URL_TEMPLATE = "https://hts.usitc.gov/reststop/exportList?from=0100000000&to=9999999999&format=JSON&styles=false"
@@ -110,7 +116,7 @@ def _roll_up(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return by_code
 
 
-async def _upsert_rows(db: AsyncSession, rows: list[dict[str, Any]]) -> int:
+async def _upsert_rows(db: AsyncSession, rows: list[dict[str, Any]], run=None) -> int:
     if not rows:
         return 0
     embedder = lazy_embedder()
@@ -153,7 +159,10 @@ async def _upsert_rows(db: AsyncSession, rows: list[dict[str, Any]]) -> int:
             )
             await db.execute(stmt)
             n += 1
-        await db.commit()
+        if run is not None:
+            await mark_progress(db, run, n)
+        else:
+            await db.commit()
         log.info("hts.upsert_progress", rows=n, total=len(rows))
     return n
 
@@ -175,7 +184,7 @@ async def main_async(year: int | None, file: Path | None) -> None:
     log.info("hts.rolled_up", n_rows=len(rows))
 
     async with with_run_logging("HTS", notes=f"file={file}") as (db, run):
-        n = await _upsert_rows(db, rows)
+        n = await _upsert_rows(db, rows, run=run)
         await update_tsv_for_table(db, "hs_code", columns=("title", "description"))
         await db.commit()
         run.rows_upserted = n

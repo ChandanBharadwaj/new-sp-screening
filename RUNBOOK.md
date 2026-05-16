@@ -1,147 +1,98 @@
-# Runbook — Commodity Screening Engine (all phases)
+# Runbook — Commodity Screening Engine
 
-Operator-facing companion to `README.md`. Real imported data only — the repo ships no synthetic gold or sanctions data.
+Operator runbook. Everything is driven from the web UI; there are no commands to memorize.
 
-## 0. Prereqs
-
-- Python 3.11
-- Node 18+ (for the frontend)
-- Docker + Compose
-
-## 1. Bring up infra and the API
+## Bring up the system (one-time, infra)
 
 ```bash
-cp .env.example .env
-docker compose up -d postgres redis
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-pip install -e .
-alembic upgrade head
-uvicorn app.main:app --reload
+docker compose up -d
 ```
 
-First startup downloads bge-small, bge-reranker-v2-m3, and GLiNER — expect 20-40s cold-start (~1 GB RAM steady state).
+This starts Postgres (with pgvector), Redis, the FastAPI app, and the arq worker.
+The first time the app starts it downloads the sentence-transformer + cross-encoder + GLiNER weights (~1 GB total) — give it 30–60 seconds before opening the UI.
 
-## 2. Frontend
+Frontend (in `frontend/`):
 
 ```bash
-cd frontend
 npm install
-npm run dev   # http://localhost:5173
+npm run dev
 ```
 
-Pages: Status (default landing) · Upload · Results (drill into a result for full reasoning trace + override controls) · HS Browser · Sanctions Browser · Rules · Dashboards.
+Open `http://localhost:5173`.
 
-## 3. Phase 0+1 — HS taxonomy + training data + gold set
+## Operator workflow — everything happens in the UI
 
-```bash
-# US HTS taxonomy (~5k codes at level 6) + chapter/section notes
-python -m app.refdata.hts.ingest --year 2025
+### 1. Status page (landing)
 
-# US Census Schedule B (operator downloads CSV from census.gov first)
-python -m app.refdata.schedule_b.ingest --file ./data/schedule_b/schedule_b.csv
+Open the app. The **Status** page is the default landing screen.
 
-# CROSS rulings — two-pass, 1 rps polite default. ~80 min for 5000 rulings.
-python -m app.refdata.cross.scraper --max-rulings 5000
-python -m app.refdata.cross.ingest --html-dir data/cross_raw/rulings
+- Top row: green/red dots for Postgres and Redis, engine version, uptime.
+- Models card: which models are loaded, load time, last call latency.
+- Reference data: every source with last-run timestamp, row count, and an inline **Run** button.
+- Eval: latest accuracy + p95 vs ship thresholds.
+- Recent batches.
 
-# Populate hs_entity_index by running GLiNER over every HS code's title+description
-python -m app.refdata.hs_entities.build
+### 2. Admin page — load every data source
 
-# Assemble the gold set from already-ingested rows, stratified by chapter
-python -m app.refdata.gold.assemble --target 1200 --per-chapter 30
+Click **Admin** in the navbar. You'll see every refdata source grouped by kind (HS taxonomy / labeled training data / derived / sanctions).
+
+For each source:
+- A **publisher** link to the authoritative URL.
+- For sources that need files (Schedule B, EU Dual-Use Annex I, EU Russia annexes, BIS CCL, EU Consolidated FSF): **Upload** buttons. Pick the file you downloaded from the publisher; it persists to `./data/<source>/`.
+- For auto-download sources (HTS, CROSS, UN Consolidated): no file upload needed.
+- Params form: tweak per-source knobs (HTS year, CROSS max_rulings, EU Russia annex/direction).
+- A **Run** button. Disabled until any required files are uploaded.
+
+While a source is running, its card shows a live progress bar driven by `rows_upserted` in the database. You can leave the page and come back — the Status row stays in sync.
+
+Two top-level buttons:
+- **Run all ready sources** — kicks off every source whose required files are present, respecting `depends_on` (HTS before HsEntityIndex, CROSS before GoldAssembly).
+- **Reset data…** — opens a confirm panel with checkboxes:
+  - by default truncates every ingested data table (`hs_code`, `hs_training_example`, `sanctioned_commodity`, `country_rule`, `hs_entity_index`, `refdata_run`, plus `shipment` / `screening_result` if `include_results` is checked).
+  - leaves all source files on disk under `./data/`, so you can re-run any source one click later without re-downloading.
+  - by default leaves operator-authored `screening_rule` rows alone (toggle `include_rules` to also drop them).
+
+### 3. Data page — browse what you have
+
+Click **Data** in the navbar. Five tabs:
+- **Training examples** — the `hs_training_example` table with source filter, full-text search, chapter filter, pagination.
+- **Shipments** — every shipment you've screened.
+- **Eval runs** — accuracy + latency history.
+- **Refdata runs** — every ingestion run with status + row counts (live-updates).
+- **Files on disk** — every file under `./data/`.
+
+### 4. Browse / manage the rest
+
+- **HS** — chapter tree + search over the HS taxonomy.
+- **Sanctions** — country-pair heatmap + sanctioned-commodity drill-down with provenance links.
+- **Rules** — author semantic rules, test them live against sample text before saving, view version history.
+- **Upload** — drop a CSV of shipments for batch screening.
+- **Results** — table of screening results; click a row to see the full §10 reasoning trace and submit overrides (HS correction, dismiss sanction/rule hit, free-text note) that flow into `feedback_event`.
+- **Dashboards** — chapter volume, sanction sources, country-pair heatmap, score histograms, override-rate trend.
+
+## Source provenance
+
+Every authoritative URL the operator needs to download files from is listed in `docs/sanctions-sources.md` (sanctions) and is also surfaced as a "publisher" link on each source card in the Admin page.
+
+## What's where on disk
+
+```
+data/
+  hts/                       # cached USITC HTS JSON (auto-downloaded)
+  cross_raw/
+    search/                  # cached search pages
+    rulings/                 # cached individual ruling HTML
+  schedule_b/                # operator-uploaded Census CSV
+  sanctions/                 # operator-uploaded EU/BIS/UN XLSX/XML files
+artifacts/
+  ltr.txt                    # LightGBM model — appears once training has run
+eval/
+  gold/splits/{train,dev,test}.jsonl   # produced by Admin → GoldAssembly
+  reports/                   # eval run reports
 ```
 
-Every run writes a `refdata_run` row → visible on the Status page.
+## If something goes wrong
 
-## 4. Train the LightGBM LTR fusion model
-
-```bash
-python -m app.training.ltr_dataset --gold eval/gold/splits/train.jsonl --out artifacts/ltr_train.csv
-python -m app.training.ltr_train --in artifacts/ltr_train.csv --out artifacts/ltr.txt
-```
-
-Until `artifacts/ltr.txt` exists, the pipeline uses a deterministic linear-blend fallback (Status page shows "fallback" for the LTR card).
-
-## 5. Phase 2 — Sanctions ingestion (real authoritative sources only)
-
-Each source needs operator-downloaded files. See `docs/sanctions-sources.md` for provenance URLs and the list of sources that are skipped under the no-generated-data rule.
-
-```bash
-# EU Dual-Use Annex I (download XLSX from EUR-Lex; CN crosswalk optional)
-python -m app.refdata.sanctions.eu_dual_use.ingest \
-  --file ./data/sanctions/eu_dual_use_annex_i.xlsx \
-  --crosswalk ./data/sanctions/cn_crosswalk.xlsx
-
-# EU Russia sanctions (per-annex)
-python -m app.refdata.sanctions.eu_russia.ingest \
-  --file ./data/sanctions/eu_russia_annex_xvii.xlsx \
-  --direction export --annex XVII
-
-# US BIS Commerce Control List (needs published CCL + HS-ECCN crosswalk)
-python -m app.refdata.sanctions.bis_ccl.ingest \
-  --ccl-file ./data/sanctions/bis_ccl.csv \
-  --crosswalk-file ./data/sanctions/bis_hs_eccn_crosswalk.xlsx
-
-# UN Consolidated List (auto-downloads XML)
-python -m app.refdata.sanctions.un.ingest --download
-
-# EU Consolidated Sanctions (operator obtains the XML token first)
-python -m app.refdata.sanctions.eu_consolidated.ingest --file ./data/sanctions/eu_consolidated.xml
-```
-
-## 6. Phase 2 — Sanctions eval
-
-```bash
-python -m eval.runners.build_sanctions_eval --positives 200 --negatives 200
-python -m eval.runners.run_sanctions_eval --threshold 0.5
-```
-
-## 7. Phase 3 — Rules
-
-Rules are operator-authored via the Rule Manager UI (`/rules`). No data import. Once analysts have labeled which shipments their rules SHOULD have hit (`eval/gold/rule_eval.jsonl`), run:
-
-```bash
-python -m eval.runners.run_rule_eval
-```
-
-## 8. Phase 4 — Feedback + Dashboards
-
-- Mark HS corrections, dismiss sanctions or rule hits, add notes from the result detail page.
-- View aggregate charts at `/dashboards`.
-- Promote analyst corrections into gold candidates for review:
-
-```bash
-python -m eval.runners.sample_feedback_to_gold --since 2026-01-01
-```
-
-## 9. Phase 1 ship-gate eval
-
-```bash
-python -m eval.runners.run_eval --classifier pipeline --split test --report eval/reports/phase1.json
-python -m eval.ci.compare --report eval/reports/phase1.json
-```
-
-## 10. Screen a single shipment
-
-```bash
-curl -s http://localhost:8000/api/v1/screen \
-  -H "Content-Type: application/json" \
-  -d '{"commodity_text":"women cotton trousers","cargo_text":"hemmed at ankle","origin_iso":"IN","destination_iso":"US"}' | jq
-```
-
-Returns the §10-shaped response (no allow/block/review — quantitative only).
-
-## 11. Batch upload
-
-```bash
-docker compose up -d worker          # arq worker
-curl -F "file=@shipments.csv" http://localhost:8000/api/v1/batch/upload
-```
-
-CSV required column: `commodity_text`. Optional: `cargo_text`, `origin_iso`, `destination_iso`, `external_ref`. Progress shows on Status and on the Upload page.
-
----
-
-## Source provenance (Phase 2)
-
-See `docs/sanctions-sources.md` for the complete list of authoritative URLs and the sources that are intentionally skipped under the no-generated-data rule.
+- A run's status card on the Admin page shows the error message inline.
+- The Refdata-runs tab on the Data page shows every run's history.
+- Hit **Run** again to retry — uploads/cached files are reused.

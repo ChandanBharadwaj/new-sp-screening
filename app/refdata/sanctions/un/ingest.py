@@ -85,7 +85,7 @@ async def main_async(file: Path | None, download: bool) -> None:
     log.info("un.parsed", n=len(items))
 
     async with with_run_logging("UN_CONSOLIDATED", notes=f"file={file}") as (db, run):
-        counts = await upsert_sanctioned_commodities(db, items, source="UN_CONSOLIDATED")
+        counts = await upsert_sanctioned_commodities(db, items, source="UN_CONSOLIDATED", run=run)
         run.rows_upserted = counts["sanctioned"]
 
 

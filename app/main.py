@@ -4,8 +4,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    routes_admin,
     routes_batch,
     routes_dashboards,
+    routes_data,
     routes_feedback,
     routes_hs,
     routes_results,
@@ -52,6 +54,8 @@ app.include_router(routes_sanctions.router)
 app.include_router(routes_rules.router)
 app.include_router(routes_feedback.router)
 app.include_router(routes_dashboards.router)
+app.include_router(routes_admin.router)
+app.include_router(routes_data.router)
 
 
 @app.get("/health")

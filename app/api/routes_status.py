@@ -30,39 +30,19 @@ _started_at = time.time()
 THRESHOLDS_PATH = Path(__file__).resolve().parents[2] / "eval" / "ci" / "thresholds.yaml"
 
 REFDATA_SOURCES = [
-    {
-        "source": "HTS",
-        "command": "python -m app.refdata.hts.ingest --year 2025",
-        "table": "hs_code",
-    },
-    {
-        "source": "ScheduleB",
-        "command": "python -m app.refdata.schedule_b.ingest --file ./data/schedule_b/schedule_b.csv",
-        "table": "hs_training_example",
-    },
-    {
-        "source": "CROSS",
-        "command": "python -m app.refdata.cross.ingest --html-dir data/cross_raw/rulings",
-        "table": "hs_training_example",
-    },
-    {
-        "source": "HsEntityIndex",
-        "command": "python -m app.refdata.hs_entities.build",
-        "table": "hs_entity_index",
-    },
-    {
-        "source": "GoldAssembly",
-        "command": "python -m app.refdata.gold.assemble --target 1200",
-        "table": "eval/gold/splits",
-    },
+    {"source": "HTS", "table": "hs_code"},
+    {"source": "ScheduleB", "table": "hs_training_example"},
+    {"source": "CROSS", "table": "hs_training_example"},
+    {"source": "HsEntityIndex", "table": "hs_entity_index"},
+    {"source": "GoldAssembly", "table": "eval/gold/splits"},
 ]
 
 SANCTIONS_SOURCES = [
-    {"source": "EU_DUAL_USE", "command": "python -m app.refdata.sanctions.eu_dual_use.ingest --file ./data/sanctions/eu_dual_use_annex_i.xlsx"},
-    {"source": "EU_RUSSIA", "command": "python -m app.refdata.sanctions.eu_russia.ingest --file ./data/sanctions/eu_russia_annex_xvii.xlsx --direction export --annex XVII"},
-    {"source": "BIS_CCL", "command": "python -m app.refdata.sanctions.bis_ccl.ingest --ccl-file ./data/sanctions/bis_ccl.csv --crosswalk-file ./data/sanctions/bis_hs_eccn_crosswalk.xlsx"},
-    {"source": "UN_CONSOLIDATED", "command": "python -m app.refdata.sanctions.un.ingest --download"},
-    {"source": "EU_CONSOLIDATED", "command": "python -m app.refdata.sanctions.eu_consolidated.ingest --file ./data/sanctions/eu_consolidated.xml"},
+    {"source": "EU_DUAL_USE"},
+    {"source": "EU_RUSSIA"},
+    {"source": "BIS_CCL"},
+    {"source": "UN_CONSOLIDATED"},
+    {"source": "EU_CONSOLIDATED"},
 ]
 
 
@@ -144,7 +124,6 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
         sources.append(
             {
                 "source": s["source"],
-                "command": s["command"],
                 "last_run": {
                     "started_at": last_run.started_at.isoformat() if last_run and last_run.started_at else None,
                     "finished_at": last_run.finished_at.isoformat() if last_run and last_run.finished_at else None,
@@ -195,7 +174,6 @@ async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, 
         sources.append(
             {
                 "source": s["source"],
-                "command": s["command"],
                 "row_count": int(by_source.get(s["source"], 0)),
                 "last_run": (
                     {

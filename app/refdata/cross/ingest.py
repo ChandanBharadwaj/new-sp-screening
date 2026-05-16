@@ -141,6 +141,7 @@ async def _upsert(items: list[dict]) -> int:
                 stmt = stmt.on_conflict_do_nothing()
                 await db.execute(stmt)
                 n += 1
+            run.rows_upserted = n
             await db.commit()
             log.info("cross.upsert_progress", rows=n)
         await update_tsv_for_table(db, "hs_training_example", columns=("description",))

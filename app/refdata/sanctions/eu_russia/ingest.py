@@ -89,7 +89,7 @@ async def main_async(file: Path, direction: str, annex_label: str) -> None:
         db,
         run,
     ):
-        counts = await upsert_sanctioned_commodities(db, items, source="EU_RUSSIA")
+        counts = await upsert_sanctioned_commodities(db, items, source="EU_RUSSIA", run=run)
         run.rows_upserted = counts["sanctioned"]
         run.notes = (run.notes or "") + f" | rules={counts['rules']}"
 

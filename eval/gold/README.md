@@ -1,17 +1,14 @@
 # Gold dataset
 
-**Real-data only.** The repo does not ship hand-written gold rows under the no-mock-data policy.
+**Real-data only.** The repo does not ship hand-written gold rows.
 
-The splits at `eval/gold/splits/{train,dev,test}.jsonl` are produced by sampling already-ingested rows from `hs_training_example` via:
+The splits at `eval/gold/splits/{train,dev,test}.jsonl` are produced from already-ingested rows.
 
-```bash
-python -m app.refdata.gold.assemble --target 1200 --per-chapter 30
-```
+To create them:
+1. Open the **Admin** page in the UI.
+2. Run **HTS** (auto-download).
+3. Run **CROSS** (auto-scrape + ingest; bound `max_rulings` from the params form if you want a smaller first cut).
+4. Optionally upload a Census Schedule B CSV via the **ScheduleB** card and click Run.
+5. Run **GoldAssembly** — stratifies by 2-digit chapter and writes the three splits with 70/15/15 ratios.
 
-Prerequisites:
-1. `python -m app.refdata.hts.ingest --year 2025`
-2. `python -m app.refdata.cross.scraper --max-rulings 5000`
-3. `python -m app.refdata.cross.ingest --html-dir data/cross_raw/rulings`
-4. (Optional) `python -m app.refdata.schedule_b.ingest --file ./data/schedule_b/schedule_b.csv`
-
-The assemble script stratifies by 2-digit chapter and splits 70/15/15 by chapter to avoid leakage. Run history surfaces on the Status UI as `source=GoldAssembly`.
+Run history surfaces on the Status and Data pages as `source=GoldAssembly`.

@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CountryRule, SanctionedCommodity
-from app.refdata.common import batches, lazy_embedder, update_tsv_for_table
+from app.db.models import CountryRule, RefdataRun, SanctionedCommodity
+from app.refdata.common import batches, lazy_embedder, mark_progress, update_tsv_for_table
 from app.telemetry import log
 
 
@@ -16,6 +16,7 @@ async def upsert_sanctioned_commodities(
     db: AsyncSession,
     rows: list[dict],
     source: str,
+    run: RefdataRun | None = None,
 ) -> dict[str, int]:
     """Upsert sanctioned_commodity rows, embedding descriptions in batches.
 
@@ -71,7 +72,10 @@ async def upsert_sanctioned_commodities(
                     )
                     await db.execute(cr)
                     n_rules += 1
-        await db.commit()
+        if run is not None:
+            await mark_progress(db, run, n_sanctioned)
+        else:
+            await db.commit()
         log.info("sanctions.upsert_progress", source=source, sanctioned=n_sanctioned, rules=n_rules)
     await update_tsv_for_table(db, "sanctioned_commodity", columns=("description",))
     await db.commit()

@@ -65,7 +65,7 @@ async def main_async(file: Path) -> None:
     items = _parse(file)
     log.info("eu_consolidated.parsed", n=len(items))
     async with with_run_logging("EU_CONSOLIDATED", notes=f"file={file}") as (db, run):
-        counts = await upsert_sanctioned_commodities(db, items, source="EU_CONSOLIDATED")
+        counts = await upsert_sanctioned_commodities(db, items, source="EU_CONSOLIDATED", run=run)
         run.rows_upserted = counts["sanctioned"]
 
 

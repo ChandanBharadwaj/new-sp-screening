@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Link, NavLink, Route, Routes, Navigate } from "react-router-dom";
 import Status from "./pages/Status";
+import Admin from "./pages/Admin";
+import Data from "./pages/Data";
 import Upload from "./pages/Upload";
 import Results from "./pages/Results";
 import ResultDetail from "./pages/ResultDetail";
@@ -25,6 +27,8 @@ function Layout({ children }: { children: React.ReactNode }) {
           <Link to="/status" className="font-semibold">Commodity Screening</Link>
           <nav className="flex gap-1 ml-4 flex-wrap">
             <NavLink to="/status" className={link}>Status</NavLink>
+            <NavLink to="/admin" className={link}>Admin</NavLink>
+            <NavLink to="/data" className={link}>Data</NavLink>
             <NavLink to="/upload" className={link}>Upload</NavLink>
             <NavLink to="/results" className={link}>Results</NavLink>
             <NavLink to="/hs" className={link}>HS</NavLink>
@@ -47,6 +51,8 @@ createRoot(document.getElementById("root")!).render(
           <Routes>
             <Route path="/" element={<Navigate to="/status" />} />
             <Route path="/status" element={<Status />} />
+            <Route path="/admin" element={<Admin />} />
+            <Route path="/data" element={<Data />} />
             <Route path="/upload" element={<Upload />} />
             <Route path="/results" element={<Results />} />
             <Route path="/results/:id" element={<ResultDetail />} />
