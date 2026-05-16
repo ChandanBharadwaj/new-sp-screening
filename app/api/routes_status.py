@@ -11,7 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session
 from app.config import settings
-from app.db.models import BatchJob, EvalRun, HsCode, HsTrainingExample, RefdataRun
+from app.db.models import (
+    BatchJob,
+    CountryRule,
+    EvalRun,
+    HsCode,
+    HsEntityIndex,
+    HsTrainingExample,
+    RefdataRun,
+    SanctionedCommodity,
+    ScreeningRule,
+)
 from app.models.registry import model_status
 
 router = APIRouter(prefix="/api/v1/status", tags=["status"])
@@ -32,9 +42,27 @@ REFDATA_SOURCES = [
     },
     {
         "source": "CROSS",
-        "command": "python -m app.refdata.cross.ingest",
+        "command": "python -m app.refdata.cross.ingest --html-dir data/cross_raw/rulings",
         "table": "hs_training_example",
     },
+    {
+        "source": "HsEntityIndex",
+        "command": "python -m app.refdata.hs_entities.build",
+        "table": "hs_entity_index",
+    },
+    {
+        "source": "GoldAssembly",
+        "command": "python -m app.refdata.gold.assemble --target 1200",
+        "table": "eval/gold/splits",
+    },
+]
+
+SANCTIONS_SOURCES = [
+    {"source": "EU_DUAL_USE", "command": "python -m app.refdata.sanctions.eu_dual_use.ingest --file ./data/sanctions/eu_dual_use_annex_i.xlsx"},
+    {"source": "EU_RUSSIA", "command": "python -m app.refdata.sanctions.eu_russia.ingest --file ./data/sanctions/eu_russia_annex_xvii.xlsx --direction export --annex XVII"},
+    {"source": "BIS_CCL", "command": "python -m app.refdata.sanctions.bis_ccl.ingest --ccl-file ./data/sanctions/bis_ccl.csv --crosswalk-file ./data/sanctions/bis_hs_eccn_crosswalk.xlsx"},
+    {"source": "UN_CONSOLIDATED", "command": "python -m app.refdata.sanctions.un.ingest --download"},
+    {"source": "EU_CONSOLIDATED", "command": "python -m app.refdata.sanctions.eu_consolidated.ingest --file ./data/sanctions/eu_consolidated.xml"},
 ]
 
 
@@ -93,6 +121,8 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
     ).all()
     train_by_source = {s: int(n) for s, n in train_by_source_rows}
 
+    entity_total = (await db.execute(select(func.count()).select_from(HsEntityIndex))).scalar_one()
+
     sources = []
     for s in REFDATA_SOURCES:
         last_run = (
@@ -105,6 +135,10 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
         ).scalar_one_or_none()
         if s["table"] == "hs_code":
             row_count = hs_total
+        elif s["table"] == "hs_entity_index":
+            row_count = entity_total
+        elif s["table"] == "eval/gold/splits":
+            row_count = last_run.rows_upserted if last_run else 0
         else:
             row_count = train_by_source.get(s["source"], 0)
         sources.append(
@@ -131,8 +165,70 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
             "hs_code_by_level": hs_by_level,
             "hs_training_example": int(train_total),
             "hs_training_example_by_source": train_by_source,
+            "hs_entity_index": int(entity_total),
         },
     }
+
+
+@router.get("/sanctions")
+async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+    sanc_total = (await db.execute(select(func.count()).select_from(SanctionedCommodity))).scalar_one()
+    rules_total = (await db.execute(select(func.count()).select_from(CountryRule))).scalar_one()
+    by_source = dict(
+        (
+            await db.execute(
+                select(SanctionedCommodity.source, func.count()).group_by(SanctionedCommodity.source)
+            )
+        ).all()
+    )
+
+    sources = []
+    for s in SANCTIONS_SOURCES:
+        last_run = (
+            await db.execute(
+                select(RefdataRun)
+                .where(RefdataRun.source == s["source"])
+                .order_by(RefdataRun.started_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        sources.append(
+            {
+                "source": s["source"],
+                "command": s["command"],
+                "row_count": int(by_source.get(s["source"], 0)),
+                "last_run": (
+                    {
+                        "started_at": last_run.started_at.isoformat() if last_run.started_at else None,
+                        "finished_at": last_run.finished_at.isoformat() if last_run.finished_at else None,
+                        "rows_upserted": last_run.rows_upserted,
+                        "status": last_run.status,
+                        "error_message": last_run.error_message,
+                    }
+                    if last_run
+                    else {"status": "never_run"}
+                ),
+            }
+        )
+
+    return {
+        "sources": sources,
+        "totals": {
+            "sanctioned_commodity": int(sanc_total),
+            "country_rule": int(rules_total),
+        },
+    }
+
+
+@router.get("/rules")
+async def rules_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+    total = (await db.execute(select(func.count()).select_from(ScreeningRule))).scalar_one()
+    active = (
+        await db.execute(
+            select(func.count()).select_from(ScreeningRule).where(ScreeningRule.active.is_(True))
+        )
+    ).scalar_one()
+    return {"total": int(total), "active": int(active)}
 
 
 @router.get("/eval")

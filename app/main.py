@@ -3,7 +3,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import routes_batch, routes_hs, routes_results, routes_screen, routes_status
+from app.api import (
+    routes_batch,
+    routes_dashboards,
+    routes_feedback,
+    routes_hs,
+    routes_results,
+    routes_rules,
+    routes_sanctions,
+    routes_screen,
+    routes_status,
+)
 from app.config import settings
 from app.models.registry import load_models
 from app.telemetry import configure_logging, log
@@ -38,6 +48,10 @@ app.include_router(routes_batch.router)
 app.include_router(routes_results.router)
 app.include_router(routes_hs.router)
 app.include_router(routes_status.router)
+app.include_router(routes_sanctions.router)
+app.include_router(routes_rules.router)
+app.include_router(routes_feedback.router)
+app.include_router(routes_dashboards.router)
 
 
 @app.get("/health")

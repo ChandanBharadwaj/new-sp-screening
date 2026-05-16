@@ -46,27 +46,39 @@ def _normalize_code(raw: str) -> str:
 
 
 def _roll_up(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Aggregate raw HTS rows into level-2/4/6 records."""
+    """Aggregate raw HTS rows into level-2/4/6 records; also collect chapter/section notes."""
     by_code: dict[str, dict[str, Any]] = {}
-    chapter_descriptions: dict[str, str] = {}
+    chapter_notes: dict[str, list[str]] = {}
+    pending_section_note: list[str] = []
+    current_section_text: str | None = None
 
     for it in items:
         code = _normalize_code(it.get("htsno") or "")
         desc = (it.get("description") or "").strip()
+        # USITC publishes "notes" rows with no htsno; capture them.
         if not code:
-            # often these are chapter / heading rollup rows; try to capture chapter notes
-            indent = it.get("indent")
-            if indent in ("0", 0) and desc:
-                # heuristic: standalone "Section" rows have no code
-                pass
+            note_text = (it.get("notes") or it.get("additionalNotes") or desc or "").strip()
+            if not note_text:
+                continue
+            indent = str(it.get("indent") or "")
+            lower = desc.lower() if desc else ""
+            if lower.startswith("section"):
+                current_section_text = note_text
+                pending_section_note = [note_text]
+            elif indent in ("0", "1") and "note" in lower:
+                # Generic note that attaches to whichever chapter follows.
+                pending_section_note.append(note_text)
             continue
 
         chapter = code[:2]
         heading = code[:4]
         subheading = code[:6]
 
-        if chapter not in chapter_descriptions:
-            chapter_descriptions[chapter] = ""
+        if chapter not in chapter_notes:
+            chapter_notes[chapter] = []
+            if pending_section_note:
+                chapter_notes[chapter].extend(pending_section_note)
+                pending_section_note = []
 
         for lvl, lvl_code in ((2, chapter), (4, heading), (6, subheading)):
             if len(lvl_code) < lvl:
@@ -80,13 +92,20 @@ def _roll_up(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
                     "parent_code": lvl_code[: lvl - 2] if lvl > 2 else None,
                     "title": desc[:512] if lvl != 6 else (desc[:512] or lvl_code),
                     "description": desc,
+                    "chapter_notes": None,
+                    "section_notes": current_section_text,
                 }
             else:
-                # Keep the longest title we've seen; concatenate descriptions.
                 if len(desc) > len(existing["description"] or ""):
                     existing["description"] = desc
                 if not existing["title"] or len(desc) < len(existing["title"]):
                     existing["title"] = desc[:512] or existing["title"]
+
+    # Attach chapter notes to every row in that chapter.
+    for code, row in by_code.items():
+        notes = chapter_notes.get(row["chapter"])
+        if notes:
+            row["chapter_notes"] = "\n\n".join(notes)
 
     return by_code
 
@@ -97,7 +116,14 @@ async def _upsert_rows(db: AsyncSession, rows: list[dict[str, Any]]) -> int:
     embedder = lazy_embedder()
     n = 0
     for batch in batches(rows, 64):
-        texts = [(r["title"] or "") + ". " + (r["description"] or "") for r in batch]
+        # For level-2 rows we mix chapter notes into the embedded text so legal
+        # cues (chapter scope, exclusions) are retrievable.
+        texts = []
+        for r in batch:
+            base = (r["title"] or "") + ". " + (r["description"] or "")
+            if r["level"] == 2 and r.get("chapter_notes"):
+                base = base + " || " + r["chapter_notes"][:2000]
+            texts.append(base)
         vectors = embedder.encode_batch(texts)
         for r, v in zip(batch, vectors, strict=True):
             stmt = insert(HsCode).values(
@@ -107,6 +133,8 @@ async def _upsert_rows(db: AsyncSession, rows: list[dict[str, Any]]) -> int:
                 chapter=r["chapter"],
                 title=r["title"],
                 description=r["description"],
+                chapter_notes=r.get("chapter_notes"),
+                section_notes=r.get("section_notes"),
                 embedding=v.tolist(),
             )
             stmt = stmt.on_conflict_do_update(
@@ -117,6 +145,8 @@ async def _upsert_rows(db: AsyncSession, rows: list[dict[str, Any]]) -> int:
                     "chapter": stmt.excluded.chapter,
                     "title": stmt.excluded.title,
                     "description": stmt.excluded.description,
+                    "chapter_notes": stmt.excluded.chapter_notes,
+                    "section_notes": stmt.excluded.section_notes,
                     "embedding": stmt.excluded.embedding,
                     "updated_at": text("now()"),
                 },

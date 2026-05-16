@@ -53,6 +53,9 @@ async def screen(
         cargo_text=body.cargo_text,
         origin_iso=body.origin_iso,
         destination_iso=body.destination_iso,
+        shipment_value=body.shipment_value,
+        currency=body.currency,
+        metadata=body.metadata,
     )
     await _persist(db, body, payload)
     return payload
@@ -71,5 +74,8 @@ async def classify(
         cargo_text=body.cargo_text,
         origin_iso=body.origin_iso,
         destination_iso=body.destination_iso,
+        shipment_value=body.shipment_value,
+        currency=body.currency,
+        metadata=body.metadata,
     )
     return payload["hs_classification"]

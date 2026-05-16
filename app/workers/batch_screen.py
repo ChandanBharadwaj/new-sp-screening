@@ -30,6 +30,9 @@ async def screen_one(ctx: dict, shipment_id: str, batch_id: str) -> dict:
                 cargo_text=ship.cargo_text,
                 origin_iso=ship.origin_iso,
                 destination_iso=ship.destination_iso,
+                shipment_value=float(ship.shipment_value) if ship.shipment_value is not None else None,
+                currency=ship.currency,
+                metadata=ship.metadata_json,
                 shipment_id=sid,
             )
             res = ScreeningResult(

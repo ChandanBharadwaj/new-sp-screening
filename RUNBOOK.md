@@ -1,19 +1,12 @@
-# Runbook — Commodity Screening Engine (Phase 0 + Phase 1 scaffold)
+# Runbook — Commodity Screening Engine (all phases)
 
-This is the operator-facing companion to `README.md`. It tells you how to bring the
-Python-only stack up locally and how to fill it with data.
-
-The original `README.md` is the canonical spec; everything here implements it with
-the Python-only stack the user chose (Java/Spring Boot orchestrator collapsed into
-one FastAPI service; no schedulers; Status UI surfaces what's been done).
-
----
+Operator-facing companion to `README.md`. Real imported data only — the repo ships no synthetic gold or sanctions data.
 
 ## 0. Prereqs
 
 - Python 3.11
 - Node 18+ (for the frontend)
-- Docker + Compose (for local Postgres-with-pgvector and Redis)
+- Docker + Compose
 
 ## 1. Bring up infra and the API
 
@@ -26,40 +19,36 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-First startup downloads the bge-small embedder, the bge-reranker cross-encoder, and
-GLiNER — expect 20-40 seconds of cold-start (and ~1 GB RAM steady state).
-
-Visit `http://localhost:8000/docs` for OpenAPI, `http://localhost:8000/health` for
-liveness.
+First startup downloads bge-small, bge-reranker-v2-m3, and GLiNER — expect 20-40s cold-start (~1 GB RAM steady state).
 
 ## 2. Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev   # http://localhost:5173 — Vite proxies /api to :8000
+npm run dev   # http://localhost:5173
 ```
 
-The **Status** page is the landing screen. It will show:
-- Postgres/Redis reachable
-- Each model's load state + last-call latency
-- Each refdata source's last-run timestamp + row count (will be empty until you run the ingesters)
-- Latest eval run vs Phase 1 thresholds
-- Recent CSV batch jobs
+Pages: Status (default landing) · Upload · Results (drill into a result for full reasoning trace + override controls) · HS Browser · Sanctions Browser · Rules · Dashboards.
 
-## 3. Load reference data (CLI only — no scheduler)
+## 3. Phase 0+1 — HS taxonomy + training data + gold set
 
 ```bash
-# US HTS taxonomy (~5k codes at level 6). Downloads htsdata.json to data/hts/.
+# US HTS taxonomy (~5k codes at level 6) + chapter/section notes
 python -m app.refdata.hts.ingest --year 2025
 
-# US Census Schedule B (you need the CSV from census.gov)
+# US Census Schedule B (operator downloads CSV from census.gov first)
 python -m app.refdata.schedule_b.ingest --file ./data/schedule_b/schedule_b.csv
 
-# CROSS rulings — starts from the curated stub at eval/gold/cross_curated.jsonl.
-# To enrich with real rulings: scrape first, then ingest with --html-dir.
-python -m app.refdata.cross.scraper --pages 20
-python -m app.refdata.cross.ingest --html-dir data/cross_raw
+# CROSS rulings — two-pass, 1 rps polite default. ~80 min for 5000 rulings.
+python -m app.refdata.cross.scraper --max-rulings 5000
+python -m app.refdata.cross.ingest --html-dir data/cross_raw/rulings
+
+# Populate hs_entity_index by running GLiNER over every HS code's title+description
+python -m app.refdata.hs_entities.build
+
+# Assemble the gold set from already-ingested rows, stratified by chapter
+python -m app.refdata.gold.assemble --target 1200 --per-chapter 30
 ```
 
 Every run writes a `refdata_run` row → visible on the Status page.
@@ -71,49 +60,88 @@ python -m app.training.ltr_dataset --gold eval/gold/splits/train.jsonl --out art
 python -m app.training.ltr_train --in artifacts/ltr_train.csv --out artifacts/ltr.txt
 ```
 
-Until `artifacts/ltr.txt` exists, the pipeline runs with a deterministic linear blend
-fallback (Status page shows "fallback" for the LTR model). The pipeline still
-returns ranked candidates either way.
+Until `artifacts/ltr.txt` exists, the pipeline uses a deterministic linear-blend fallback (Status page shows "fallback" for the LTR card).
 
-## 5. Run the eval harness
+## 5. Phase 2 — Sanctions ingestion (real authoritative sources only)
+
+Each source needs operator-downloaded files. See `docs/sanctions-sources.md` for provenance URLs and the list of sources that are skipped under the no-generated-data rule.
 
 ```bash
-mkdir -p eval/reports
-python -m eval.runners.run_eval --classifier baseline_noop --split test --report eval/reports/baseline.json
-python -m eval.runners.run_eval --classifier pipeline      --split test --report eval/reports/pipeline.json
-python -m eval.ci.compare --report eval/reports/pipeline.json
+# EU Dual-Use Annex I (download XLSX from EUR-Lex; CN crosswalk optional)
+python -m app.refdata.sanctions.eu_dual_use.ingest \
+  --file ./data/sanctions/eu_dual_use_annex_i.xlsx \
+  --crosswalk ./data/sanctions/cn_crosswalk.xlsx
+
+# EU Russia sanctions (per-annex)
+python -m app.refdata.sanctions.eu_russia.ingest \
+  --file ./data/sanctions/eu_russia_annex_xvii.xlsx \
+  --direction export --annex XVII
+
+# US BIS Commerce Control List (needs published CCL + HS-ECCN crosswalk)
+python -m app.refdata.sanctions.bis_ccl.ingest \
+  --ccl-file ./data/sanctions/bis_ccl.csv \
+  --crosswalk-file ./data/sanctions/bis_hs_eccn_crosswalk.xlsx
+
+# UN Consolidated List (auto-downloads XML)
+python -m app.refdata.sanctions.un.ingest --download
+
+# EU Consolidated Sanctions (operator obtains the XML token first)
+python -m app.refdata.sanctions.eu_consolidated.ingest --file ./data/sanctions/eu_consolidated.xml
 ```
 
-Every run writes an `eval_run` row → visible on the Status page with pass/fail
-badges against `eval/ci/thresholds.yaml`.
+## 6. Phase 2 — Sanctions eval
 
-## 6. Screen a single shipment
+```bash
+python -m eval.runners.build_sanctions_eval --positives 200 --negatives 200
+python -m eval.runners.run_sanctions_eval --threshold 0.5
+```
+
+## 7. Phase 3 — Rules
+
+Rules are operator-authored via the Rule Manager UI (`/rules`). No data import. Once analysts have labeled which shipments their rules SHOULD have hit (`eval/gold/rule_eval.jsonl`), run:
+
+```bash
+python -m eval.runners.run_rule_eval
+```
+
+## 8. Phase 4 — Feedback + Dashboards
+
+- Mark HS corrections, dismiss sanctions or rule hits, add notes from the result detail page.
+- View aggregate charts at `/dashboards`.
+- Promote analyst corrections into gold candidates for review:
+
+```bash
+python -m eval.runners.sample_feedback_to_gold --since 2026-01-01
+```
+
+## 9. Phase 1 ship-gate eval
+
+```bash
+python -m eval.runners.run_eval --classifier pipeline --split test --report eval/reports/phase1.json
+python -m eval.ci.compare --report eval/reports/phase1.json
+```
+
+## 10. Screen a single shipment
 
 ```bash
 curl -s http://localhost:8000/api/v1/screen \
   -H "Content-Type: application/json" \
-  -d '{"commodity_text":"women cotton trousers","cargo_text":"hemmed at ankle, zip closure","origin_iso":"IN","destination_iso":"US"}' | jq
+  -d '{"commodity_text":"women cotton trousers","cargo_text":"hemmed at ankle","origin_iso":"IN","destination_iso":"US"}' | jq
 ```
 
 Returns the §10-shaped response (no allow/block/review — quantitative only).
 
-## 7. Batch upload
+## 11. Batch upload
 
 ```bash
-docker compose up -d worker          # spins up the arq worker
+docker compose up -d worker          # arq worker
 curl -F "file=@shipments.csv" http://localhost:8000/api/v1/batch/upload
 ```
 
-CSV minimum: `commodity_text` column. Optional: `cargo_text`, `origin_iso`,
-`destination_iso`, `external_ref`. Progress shows on Status and on the Upload page.
+CSV required column: `commodity_text`. Optional: `cargo_text`, `origin_iso`, `destination_iso`, `external_ref`. Progress shows on Status and on the Upload page.
 
 ---
 
-## What's a stub vs. what's real
+## Source provenance (Phase 2)
 
-- **Real**: schema, migrations, ML model wrappers, pipeline orchestration, retrieval SQL, fusion, confidence metrics, API + worker + Status UI, HTS ingester, Schedule B parser, CROSS scraper + HTML parser, LightGBM trainer, eval runners, CI workflow.
-- **Stub**: the gold-dataset splits (`eval/gold/splits/*.jsonl`) and the curated CROSS file each carry only ~5-10 rows so the harness boots end-to-end. Expand these to ≥1000 pairs to actually clear the Phase 1 ship gate.
-
-The Phase 1 accuracy gate (top-1 subheading ≥85%, etc.) cannot be hit until both the
-training data and the gold set are real-sized. Everything needed to fill them is
-wired; only the data itself is left.
+See `docs/sanctions-sources.md` for the complete list of authoritative URLs and the sources that are intentionally skipped under the no-generated-data rule.

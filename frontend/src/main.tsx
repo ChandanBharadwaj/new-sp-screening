@@ -7,6 +7,9 @@ import Upload from "./pages/Upload";
 import Results from "./pages/Results";
 import ResultDetail from "./pages/ResultDetail";
 import HsBrowser from "./pages/HsBrowser";
+import SanctionsBrowser from "./pages/SanctionsBrowser";
+import RuleManager from "./pages/RuleManager";
+import Dashboards from "./pages/Dashboards";
 import "./index.css";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
@@ -20,11 +23,14 @@ function Layout({ children }: { children: React.ReactNode }) {
       <header className="border-b bg-white">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <Link to="/status" className="font-semibold">Commodity Screening</Link>
-          <nav className="flex gap-1 ml-4">
+          <nav className="flex gap-1 ml-4 flex-wrap">
             <NavLink to="/status" className={link}>Status</NavLink>
             <NavLink to="/upload" className={link}>Upload</NavLink>
             <NavLink to="/results" className={link}>Results</NavLink>
-            <NavLink to="/hs" className={link}>HS Browser</NavLink>
+            <NavLink to="/hs" className={link}>HS</NavLink>
+            <NavLink to="/sanctions" className={link}>Sanctions</NavLink>
+            <NavLink to="/rules" className={link}>Rules</NavLink>
+            <NavLink to="/dashboards" className={link}>Dashboards</NavLink>
           </nav>
         </div>
       </header>
@@ -45,6 +51,9 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/results" element={<Results />} />
             <Route path="/results/:id" element={<ResultDetail />} />
             <Route path="/hs" element={<HsBrowser />} />
+            <Route path="/sanctions" element={<SanctionsBrowser />} />
+            <Route path="/rules" element={<RuleManager />} />
+            <Route path="/dashboards" element={<Dashboards />} />
           </Routes>
         </Layout>
       </BrowserRouter>
