@@ -1,0 +1,220 @@
+<script setup lang="ts">
+import { ref } from "vue";
+import { api } from "../api/client";
+import { useFetch, invalidateQueries } from "../api/useFetch";
+
+type Rule = {
+  id: number;
+  name: string;
+  phrase: string;
+  threshold: number;
+  conditions: Record<string, unknown> | null;
+  origin_iso: string | null;
+  destination_iso: string | null;
+  active: boolean;
+  version: number;
+  created_by: string | null;
+  created_at: string | null;
+};
+
+type TestResp = {
+  phrase_similarity: number;
+  threshold: number;
+  delta_above_threshold: number;
+};
+
+type Draft = {
+  name: string;
+  phrase: string;
+  threshold: number;
+  origin_iso: string;
+  destination_iso: string;
+  active: boolean;
+  conditions_json: string;
+};
+
+const EMPTY: Draft = {
+  name: "",
+  phrase: "",
+  threshold: 0.5,
+  origin_iso: "",
+  destination_iso: "",
+  active: true,
+  conditions_json: "",
+};
+
+const draft = ref<Draft>({ ...EMPTY });
+const editId = ref<number | null>(null);
+const testText = ref("");
+const testResp = ref<TestResp | null>(null);
+const savePending = ref(false);
+const saveError = ref<Error | null>(null);
+
+const rules = useFetch<{ items: Rule[] }>({
+  key: ["rules"],
+  fetcher: () => api.get<{ items: Rule[] }>("/api/v1/rules"),
+});
+
+function buildBody() {
+  return {
+    name: draft.value.name,
+    phrase: draft.value.phrase,
+    threshold: Number(draft.value.threshold),
+    conditions: draft.value.conditions_json ? JSON.parse(draft.value.conditions_json) : null,
+    origin_iso: draft.value.origin_iso || null,
+    destination_iso: draft.value.destination_iso || null,
+    active: draft.value.active,
+  };
+}
+
+async function save() {
+  savePending.value = true;
+  saveError.value = null;
+  try {
+    const body = buildBody();
+    if (editId.value) {
+      await api.put<Rule>(`/api/v1/rules/${editId.value}`, body);
+    } else {
+      await api.post<Rule>("/api/v1/rules", body);
+    }
+    invalidateQueries(["rules"]);
+    draft.value = { ...EMPTY };
+    editId.value = null;
+  } catch (e: any) {
+    saveError.value = e instanceof Error ? e : new Error(String(e));
+  } finally {
+    savePending.value = false;
+  }
+}
+
+async function testDraft() {
+  testResp.value = await api.post<TestResp>("/api/v1/rules/test-phrase", {
+    phrase: draft.value.phrase,
+    cargo_text: testText.value,
+    threshold: Number(draft.value.threshold),
+  });
+}
+
+function beginEdit(r: Rule) {
+  editId.value = r.id;
+  draft.value = {
+    name: r.name,
+    phrase: r.phrase,
+    threshold: r.threshold,
+    origin_iso: r.origin_iso ?? "",
+    destination_iso: r.destination_iso ?? "",
+    active: r.active,
+    conditions_json: r.conditions ? JSON.stringify(r.conditions) : "",
+  };
+}
+</script>
+
+<template>
+  <div class="grid md:grid-cols-2 gap-4">
+    <section class="bg-white border rounded-lg p-4 shadow-sm">
+      <h2 class="text-sm uppercase text-slate-500 mb-2">Rules</h2>
+      <p v-if="rules.isLoading.value || !rules.data.value" class="text-slate-500">Loading…</p>
+      <p v-else-if="rules.data.value.items.length === 0" class="text-slate-500 text-sm">No rules yet. Create one →</p>
+      <table v-else class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-xs uppercase text-slate-500">
+            <th>Name</th><th>Phrase</th><th>Thr.</th><th>Route</th><th>Active</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in rules.data.value.items" :key="r.id" class="border-t">
+            <td class="py-1">{{ r.name }} <span class="text-slate-400 text-xs">v{{ r.version }}</span></td>
+            <td class="max-w-xs truncate" :title="r.phrase">{{ r.phrase }}</td>
+            <td class="font-mono">{{ r.threshold.toFixed(2) }}</td>
+            <td class="font-mono text-xs">{{ r.origin_iso ?? "*" }} → {{ r.destination_iso ?? "*" }}</td>
+            <td>{{ r.active ? "✓" : "—" }}</td>
+            <td>
+              <button class="text-xs text-blue-700 hover:underline" @click="beginEdit(r)">edit</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="bg-white border rounded-lg p-4 shadow-sm">
+      <h2 class="text-sm uppercase text-slate-500 mb-3">
+        {{ editId ? `Edit rule #${editId}` : "New rule" }}
+      </h2>
+      <div class="grid gap-2 text-sm">
+        <label class="text-xs text-slate-500">Name</label>
+        <input v-model="draft.name" class="border rounded px-2 py-1" />
+        <label class="text-xs text-slate-500">Phrase</label>
+        <textarea v-model="draft.phrase" class="border rounded px-2 py-1" rows="3" />
+        <label class="text-xs text-slate-500">Threshold (0.0 – 1.0)</label>
+        <input
+          v-model.number="draft.threshold"
+          type="number"
+          min="0"
+          max="1"
+          step="0.01"
+          class="border rounded px-2 py-1 w-24"
+        />
+        <div class="flex gap-2">
+          <div>
+            <label class="text-xs text-slate-500">Origin</label>
+            <input
+              :value="draft.origin_iso"
+              @input="draft.origin_iso = ($event.target as HTMLInputElement).value.toUpperCase()"
+              class="border rounded px-2 py-1 w-20 block"
+            />
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">Destination</label>
+            <input
+              :value="draft.destination_iso"
+              @input="draft.destination_iso = ($event.target as HTMLInputElement).value.toUpperCase()"
+              class="border rounded px-2 py-1 w-20 block"
+            />
+          </div>
+        </div>
+        <label class="text-xs text-slate-500">Conditions JSON (optional)</label>
+        <textarea
+          v-model="draft.conditions_json"
+          class="border rounded px-2 py-1 font-mono text-xs"
+          rows="3"
+          placeholder='{"min_value": 5000, "currency_in": ["USD"]}'
+        />
+        <label class="flex items-center gap-2 text-xs">
+          <input v-model="draft.active" type="checkbox" /> active
+        </label>
+        <button
+          class="bg-slate-900 text-white px-3 py-2 rounded text-sm w-fit mt-2 disabled:opacity-50"
+          :disabled="!draft.name || !draft.phrase || savePending"
+          @click="save"
+        >
+          {{ editId ? "Save new version" : "Create rule" }}
+        </button>
+        <span v-if="saveError" class="text-xs text-red-700">{{ saveError.message }}</span>
+      </div>
+
+      <hr class="my-4" />
+      <h3 class="text-xs uppercase text-slate-500 mb-2">Test draft phrase</h3>
+      <textarea
+        v-model="testText"
+        class="border rounded px-2 py-1 w-full"
+        rows="2"
+        placeholder="sample cargo text"
+      />
+      <button
+        class="bg-slate-200 px-3 py-1 rounded text-sm mt-2"
+        :disabled="!draft.phrase || !testText"
+        @click="testDraft"
+      >Test</button>
+      <div v-if="testResp" class="mt-3 text-sm">
+        <div>Similarity: <span class="font-mono">{{ testResp.phrase_similarity.toFixed(3) }}</span></div>
+        <div>Threshold: <span class="font-mono">{{ testResp.threshold.toFixed(2) }}</span></div>
+        <div>
+          Delta:
+          <span :class="['font-mono', testResp.delta_above_threshold >= 0 ? 'text-emerald-700' : 'text-red-700']">
+            {{ testResp.delta_above_threshold.toFixed(3) }}
+          </span>
+        </div>
+      </div>
+    </section>
+  </div>
+</template>
