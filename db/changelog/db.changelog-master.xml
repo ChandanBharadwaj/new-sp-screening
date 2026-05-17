@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+    <include file="changes/0001-init.sql"                 relativeToChangelogFile="true"/>
+    <include file="changes/0002-training-eval-ui.sql"     relativeToChangelogFile="true"/>
+    <include file="changes/0003-review-fixes.sql"         relativeToChangelogFile="true"/>
+    <include file="changes/0004-batch-errors.sql"         relativeToChangelogFile="true"/>
+    <include file="changes/0005-storage-hardening.sql"    relativeToChangelogFile="true"/>
+
+</databaseChangeLog>

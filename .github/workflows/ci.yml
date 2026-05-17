@@ -16,7 +16,7 @@ jobs:
       - run: pip install ruff
       - run: ruff check app eval
 
-  alembic:
+  liquibase:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -33,15 +33,12 @@ jobs:
           --health-retries=10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: liquibase-github-actions/update@v4.29.2
         with:
-          python-version: "3.11"
-      - run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install .
-      - env:
-          DATABASE_URL: postgresql+asyncpg://screening:screening@localhost:5432/screening
-          DATABASE_URL_SYNC: postgresql://screening:screening@localhost:5432/screening
-        run: alembic upgrade head
+          changelogFile: db/changelog/db.changelog-master.xml
+          url: jdbc:postgresql://localhost:5432/screening
+          username: screening
+          password: screening
 
   pytest:
     runs-on: ubuntu-latest

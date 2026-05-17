@@ -35,6 +35,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://screening:screening@postgres:5432/screening
       DATABASE_URL_SYNC: postgresql://screening:screening@postgres:5432/screening
+      LIQUIBASE_COMMAND_URL: jdbc:postgresql://postgres:5432/screening
+      LIQUIBASE_COMMAND_USERNAME: screening
+      LIQUIBASE_COMMAND_PASSWORD: screening
       REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
@@ -53,6 +56,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://screening:screening@postgres:5432/screening
       DATABASE_URL_SYNC: postgresql://screening:screening@postgres:5432/screening
+      LIQUIBASE_COMMAND_URL: jdbc:postgresql://postgres:5432/screening
+      LIQUIBASE_COMMAND_USERNAME: screening
+      LIQUIBASE_COMMAND_PASSWORD: screening
       REDIS_URL: redis://redis:6379/0
     volumes:
       - ./artifacts:/app/artifacts

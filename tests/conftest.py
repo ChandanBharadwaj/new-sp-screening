@@ -2,7 +2,7 @@
 
 Most unit tests here are pure-Python and need no DB. DB-backed tests opt in by
 requesting the `db` fixture, which expects `DATABASE_URL` to point at a reachable
-Postgres (the CI alembic job already provides one). If no DB is reachable, the
+Postgres (the CI liquibase job already provides one). If no DB is reachable, the
 fixture skips.
 """
 from __future__ import annotations

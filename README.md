@@ -721,7 +721,7 @@ commodity-screening/
 │   └── un_consolidated_ingest.py
 │
 ├── db/
-│   └── migrations/                    # Flyway / Liquibase
+│   └── changelog/                     # Liquibase (master XML + SQL changesets)
 │
 ├── infra/
 │   ├── docker-compose.yml             # Local dev: PG + pgvector + sidecar
@@ -802,9 +802,8 @@ This section gives an autonomous agent (or developer) the concrete steps to buil
 6. Add docker-compose for PostgreSQL 16 + pgvector extension.
 
 ### Step 2 — Database
-1. Enable extensions: `CREATE EXTENSION vector; CREATE EXTENSION pg_trgm;`
-2. Apply migrations from §8 verbatim.
-3. Create HNSW + GIN indexes.
+1. Schema is managed by Liquibase (`db/changelog/db.changelog-master.xml`).
+2. The app container runs `liquibase update` from its entrypoint on startup, which installs the `vector`, `pg_trgm`, and `pgcrypto` extensions, creates all tables, and builds the HNSW + GIN indexes. To run it by hand: `liquibase --defaults-file=liquibase.properties --url=jdbc:postgresql://localhost:5432/screening --username=screening --password=screening update`.
 
 ### Step 3 — Eval harness (Phase 0)
 1. Build CROSS rulings parser: scrape or download bulk export, parse into `(description, hs_code)` JSONL.

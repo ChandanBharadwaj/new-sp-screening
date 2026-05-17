@@ -30,7 +30,12 @@ jobs:
           python-version: "3.11"
       - run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
       - run: pip install .
-      - run: alembic upgrade head
+      - uses: liquibase-github-actions/update@v4.29.2
+        with:
+          changelogFile: db/changelog/db.changelog-master.xml
+          url: jdbc:postgresql://localhost:5432/screening
+          username: screening
+          password: screening
       - name: Check for gold splits
         id: gold
         run: |
