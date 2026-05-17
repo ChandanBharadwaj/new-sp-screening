@@ -7,7 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import CountryRule, RefdataRun, SanctionedCommodity
+from app.db.models import (
+    CountryRule,
+    HsCode,
+    RefdataRun,
+    SanctionedCommodity,
+    SanctionedCommodityAlias,
+)
 from app.refdata.common import batches, lazy_embedder, mark_progress, update_tsv_for_table
 from app.telemetry import log
 
@@ -24,6 +30,11 @@ async def upsert_sanctioned_commodities(
     restriction_type, effective_from, effective_to, provenance_url, and an optional
     list of country_rules: [{origin_iso, destination_iso, restriction_type, conditions}].
     Returns counts.
+
+    Idempotency: relies on `uq_sanctioned_commodity_source_recid` and `uq_country_rule`
+    (migration 0005). Rows with NULL source_record_id are inserted each run because
+    Postgres treats NULL as distinct in unique constraints — those rows have no
+    stable identity to dedupe against.
     """
     if not rows:
         return {"sanctioned": 0, "rules": 0}
@@ -45,7 +56,9 @@ async def upsert_sanctioned_commodities(
                 provenance_url=r.get("provenance_url"),
                 embedding=v.tolist(),
             )
-            stmt = stmt.on_conflict_do_nothing()
+            stmt = stmt.on_conflict_do_nothing(
+                constraint="uq_sanctioned_commodity_source_recid"
+            )
             await db.execute(stmt)
             n_sanctioned += 1
 
@@ -69,7 +82,7 @@ async def upsert_sanctioned_commodities(
                         restriction_type=rule.get("restriction_type") or r.get("restriction_type"),
                         conditions=rule.get("conditions"),
                         active=True,
-                    )
+                    ).on_conflict_do_nothing(constraint="uq_country_rule")
                     await db.execute(cr)
                     n_rules += 1
         if run is not None:
@@ -83,12 +96,25 @@ async def upsert_sanctioned_commodities(
 
 
 def normalize_cn_code(raw: str | None) -> str | None:
+    """Normalize a single HS / CN code to 2-, 4-, or 6-digit form.
+
+    Inputs longer than 6 digits (HS-8 CN codes, HS-10 HTS codes, etc.) are
+    truncated to 6 — the HS-6 level is the international common denominator.
+    Inputs of exactly 4 or 2 digits are kept as-is; they represent heading /
+    chapter prefixes and need to be fanned out at ingest time via
+    `expand_hs_prefixes` so the structured-overlap join (`&&`) at screen time
+    actually matches 6-digit shipment classifications.
+    """
     if not raw:
         return None
     digits = "".join(c for c in raw if c.isdigit())
-    if len(digits) < 6:
-        return None
-    return digits[:6]
+    if len(digits) >= 6:
+        return digits[:6]
+    if len(digits) == 4:
+        return digits
+    if len(digits) == 2:
+        return digits
+    return None
 
 
 def normalize_codes(raw: Iterable[str | None]) -> list[str]:
@@ -100,3 +126,83 @@ def normalize_codes(raw: Iterable[str | None]) -> list[str]:
             seen.add(c)
             out.append(c)
     return out
+
+
+async def expand_hs_prefixes(db: AsyncSession, codes: list[str]) -> list[str]:
+    """Expand HS prefixes to the full set of matching 6-digit subheadings.
+
+    A 6-digit code is returned as-is. A 2- or 4-digit code is expanded by querying
+    `hs_code` for all 6-digit rows whose `code` starts with the prefix. Missing
+    prefixes (e.g. HS taxonomy not yet loaded) are dropped with a warning — they'd
+    otherwise persist as non-matching strings in `sanctioned_commodity.hs_codes`
+    and silently fail the `&&` overlap join at screening time.
+
+    Hoisted from app/refdata/sanctions/country_program/ingest.py so every
+    sanctions ingester can use it without duplicating the helper.
+    """
+    if not codes:
+        return []
+    out: set[str] = set()
+    for c in codes:
+        if len(c) == 6:
+            out.add(c)
+            continue
+        rows = (
+            await db.execute(
+                select(HsCode.code).where(
+                    HsCode.code.like(f"{c}%"),
+                    HsCode.level == 6,
+                )
+            )
+        ).scalars().all()
+        if not rows:
+            log.warning("sanctions.unexpanded_prefix", prefix=c)
+            continue
+        out.update(rows)
+    return sorted(out)
+
+
+async def expand_rows_in_place(db: AsyncSession, rows: list[dict]) -> None:
+    """Expand `hs_codes` in each row dict against the live HS taxonomy."""
+    for r in rows:
+        r["hs_codes"] = await expand_hs_prefixes(db, r.get("hs_codes") or [])
+
+
+async def insert_aliases(
+    db: AsyncSession,
+    *,
+    source: str,
+    source_record_id: str,
+    aliases: list[dict],
+) -> int:
+    """Insert aliases for a previously-upserted sanctioned_commodity.
+
+    Each alias is `{"alias": str, "alias_kind": str | None}`. Idempotent via
+    `uq_alias_per_commodity` (migration 0003). Returns the number of INSERTs
+    attempted (NOT the number actually written — ON CONFLICT swallows duplicates).
+    """
+    if not aliases:
+        return 0
+    sid = (
+        await db.execute(
+            select(SanctionedCommodity.id).where(
+                SanctionedCommodity.source == source,
+                SanctionedCommodity.source_record_id == source_record_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if sid is None:
+        return 0
+    n = 0
+    for a in aliases:
+        alias_text = (a.get("alias") or "").strip()
+        if not alias_text:
+            continue
+        stmt = insert(SanctionedCommodityAlias).values(
+            sanctioned_commodity_id=sid,
+            alias=alias_text[:500],
+            alias_kind=a.get("alias_kind"),
+        ).on_conflict_do_nothing(constraint="uq_alias_per_commodity")
+        await db.execute(stmt)
+        n += 1
+    return n

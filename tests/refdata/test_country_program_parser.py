@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.refdata.sanctions.common import expand_hs_prefixes as _expand_prefixes
 from app.refdata.sanctions.country_program.ingest import (
     VALID_DIRECTIONS,
     _country_rules,
-    _expand_prefixes,
     parse,
 )
 

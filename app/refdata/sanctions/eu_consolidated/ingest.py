@@ -16,7 +16,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from app.refdata.common import with_run_logging
-from app.refdata.sanctions.common import upsert_sanctioned_commodities
+from app.refdata.sanctions.common import insert_aliases, upsert_sanctioned_commodities
 from app.telemetry import configure_logging, log
 
 PROVENANCE = "https://webgate.ec.europa.eu/europeaid/fsd/fsf/public/"
@@ -36,6 +36,16 @@ GOODS_KEYWORDS = (
 )
 
 
+def _extract_aliases(entity) -> list[dict]:
+    """Pull `<nameAlias wholeName="..."/>` children. Defensive: tolerate either casing."""
+    out: list[dict] = []
+    for tag in entity.find_all(["nameAlias", "NAMEALIAS", "name_alias"]):
+        name = tag.get("wholeName") or tag.get("whole_name") or tag.get_text(" ", strip=True)
+        if name and name.strip():
+            out.append({"alias": name.strip(), "alias_kind": "aka"})
+    return out
+
+
 def _parse(xml_path: Path) -> list[dict]:
     soup = BeautifulSoup(xml_path.read_text(encoding="utf-8", errors="replace"), "lxml-xml")
     items: list[dict] = []
@@ -52,6 +62,7 @@ def _parse(xml_path: Path) -> list[dict]:
                 "hs_codes": [],
                 "restriction_type": "prohibited",
                 "provenance_url": PROVENANCE,
+                "_aliases": _extract_aliases(entity),
             }
         )
     return items
@@ -63,10 +74,28 @@ async def main_async(file: Path) -> None:
         log.error("eu_consolidated.file_missing", path=str(file))
         return
     items = _parse(file)
-    log.info("eu_consolidated.parsed", n=len(items))
+    log.info(
+        "eu_consolidated.parsed",
+        n=len(items),
+        with_aliases=sum(1 for r in items if r.get("_aliases")),
+    )
     async with with_run_logging("EU_CONSOLIDATED", notes=f"file={file}") as (db, run):
-        counts = await upsert_sanctioned_commodities(db, items, source="EU_CONSOLIDATED", run=run)
+        # The shared upserter doesn't know about aliases; strip them before passing in.
+        upsert_rows = [{k: v for k, v in r.items() if not k.startswith("_")} for r in items]
+        counts = await upsert_sanctioned_commodities(
+            db, upsert_rows, source="EU_CONSOLIDATED", run=run
+        )
         run.rows_upserted = counts["sanctioned"]
+        n_aliases = 0
+        for r in items:
+            n_aliases += await insert_aliases(
+                db,
+                source="EU_CONSOLIDATED",
+                source_record_id=r["source_record_id"],
+                aliases=r.get("_aliases") or [],
+            )
+        await db.commit()
+        run.notes = (run.notes or "") + f" | aliases={n_aliases}"
 
 
 def main() -> None:

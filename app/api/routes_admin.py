@@ -128,7 +128,7 @@ SOURCES: list[dict[str, Any]] = [
             {"key": "crosswalk", "label": "CN crosswalk (optional)", "path": "data/sanctions/cn_crosswalk.xlsx", "accept": ".xlsx,.xls", "optional": True},
         ],
         "params_schema": {},
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A02021R0821",
     },
     {
@@ -143,7 +143,7 @@ SOURCES: list[dict[str, Any]] = [
             "direction": {"type": "str", "default": "export", "required": True, "enum": ["export", "import", "both"]},
             "annex": {"type": "str", "default": "XVII", "required": False},
         },
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A02014R0833",
     },
     {
@@ -156,7 +156,7 @@ SOURCES: list[dict[str, Any]] = [
             {"key": "crosswalk_file", "label": "HS-ECCN crosswalk XLSX", "path": "data/sanctions/bis_hs_eccn_crosswalk.xlsx", "accept": ".xlsx,.xls,.csv"},
         ],
         "params_schema": {},
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://www.bis.doc.gov/index.php/regulations/commerce-control-list-ccl",
     },
     {
@@ -182,7 +182,7 @@ SOURCES: list[dict[str, Any]] = [
             {"key": "file", "label": "USML CSV/XLSX", "path": "data/sanctions/itar/usml.csv", "accept": ".csv,.xlsx,.xls"},
         ],
         "params_schema": {},
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://www.ecfr.gov/current/title-22/chapter-I/subchapter-M/part-121",
     },
     {

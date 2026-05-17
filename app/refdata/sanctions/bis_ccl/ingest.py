@@ -22,7 +22,11 @@ from pathlib import Path
 import pandas as pd
 
 from app.refdata.common import with_run_logging
-from app.refdata.sanctions.common import normalize_codes, upsert_sanctioned_commodities
+from app.refdata.sanctions.common import (
+    expand_rows_in_place,
+    normalize_codes,
+    upsert_sanctioned_commodities,
+)
 from app.telemetry import configure_logging, log
 
 PROVENANCE_CCL = "https://www.bis.doc.gov/index.php/regulations/commerce-control-list-ccl"
@@ -94,6 +98,9 @@ async def main_async(ccl_file: Path, crosswalk_file: Path | None) -> None:
         db,
         run,
     ):
+        # Fan out HS-2/HS-4 prefixes against the live taxonomy so the structured
+        # overlap join in app/pipeline/sanctions.py matches 6-digit shipments.
+        await expand_rows_in_place(db, items)
         counts = await upsert_sanctioned_commodities(db, items, source="BIS_CCL", run=run)
         run.rows_upserted = counts["sanctioned"]
         run.notes = (run.notes or "") + f" | rules={counts['rules']}"

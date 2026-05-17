@@ -55,7 +55,7 @@ async def _upsert_rows(db: AsyncSession, rows: list[tuple[str, str]]) -> int:
                 hs_code=code,
                 embedding=v.tolist(),
             )
-            stmt = stmt.on_conflict_do_nothing()
+            stmt = stmt.on_conflict_do_nothing(constraint="uq_hs_training_example")
             await db.execute(stmt)
             n += 1
         await db.commit()

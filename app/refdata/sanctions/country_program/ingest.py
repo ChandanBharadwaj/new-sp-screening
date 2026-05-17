@@ -36,12 +36,12 @@ import asyncio
 from pathlib import Path
 
 import yaml
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import HsCode
 from app.refdata.common import with_run_logging
-from app.refdata.sanctions.common import upsert_sanctioned_commodities
+from app.refdata.sanctions.common import (
+    expand_rows_in_place,
+    upsert_sanctioned_commodities,
+)
 from app.telemetry import configure_logging, log
 
 VALID_DIRECTIONS = ("import_from", "export_to", "both")
@@ -74,8 +74,9 @@ def parse(file: Path) -> tuple[str, str, list[dict]]:
     """Parse a country-program YAML. Returns (source_key, country_iso, rows).
 
     HS code prefixes are kept as-is (e.g. "2710" stays "2710"). Expansion to 6-digit
-    subheadings happens in `_expand_prefixes` against the live `hs_code` table — kept
-    out of `parse()` so this function stays pure and testable without a DB.
+    subheadings happens in `app.refdata.sanctions.common.expand_hs_prefixes` against
+    the live `hs_code` table — kept out of `parse()` so this function stays pure and
+    testable without a DB.
     """
     with file.open("r", encoding="utf-8") as fh:
         doc = yaml.safe_load(fh) or {}
@@ -128,42 +129,6 @@ def parse(file: Path) -> tuple[str, str, list[dict]]:
     return source_key, country_iso, rows
 
 
-async def _expand_prefixes(db: AsyncSession, codes: list[str]) -> list[str]:
-    """Expand HS prefixes to the full set of matching 6-digit subheadings.
-
-    A 6-digit code is returned as-is. A 2- or 4-digit code is expanded by querying
-    `hs_code` for all 6-digit rows whose `code` starts with the prefix. Missing
-    prefixes (e.g. HS taxonomy not yet loaded) are dropped with a warning — they'd
-    otherwise persist as non-matching strings in `sanctioned_commodity.hs_codes`
-    and silently fail the `&&` overlap join at screening time.
-    """
-    if not codes:
-        return []
-    out: set[str] = set()
-    for c in codes:
-        if len(c) == 6:
-            out.add(c)
-            continue
-        rows = (
-            await db.execute(
-                select(HsCode.code).where(
-                    HsCode.code.like(f"{c}%"),
-                    HsCode.level == 6,
-                )
-            )
-        ).scalars().all()
-        if not rows:
-            log.warning("country_program.unexpanded_prefix", prefix=c)
-            continue
-        out.update(rows)
-    return sorted(out)
-
-
-async def _expand_rows_in_place(db: AsyncSession, rows: list[dict]) -> None:
-    for r in rows:
-        r["hs_codes"] = await _expand_prefixes(db, r["hs_codes"])
-
-
 async def main_async(file: Path) -> None:
     configure_logging()
     log.info("country_program.parsing", file=str(file))
@@ -176,7 +141,7 @@ async def main_async(file: Path) -> None:
     )
     async with with_run_logging(source_key, notes=f"file={file} country={country_iso}") as (db, run):
         # Expand prefixes inside the run so the warning logs are tied to this RefdataRun.
-        await _expand_rows_in_place(db, rows)
+        await expand_rows_in_place(db, rows)
         log.info(
             "country_program.expanded",
             source=source_key,

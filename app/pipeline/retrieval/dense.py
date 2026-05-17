@@ -38,8 +38,13 @@ def _vec_literal(vec) -> str:
 
 
 async def search(db: AsyncSession, embedder: Embedder, query_text: str) -> list[dict]:
-    vec = await asyncio.to_thread(embedder.encode_one, query_text)
+    # BGE asymmetric query prefix — see Embedder.encode_query / app/models/embedder.py.
+    vec = await asyncio.to_thread(embedder.encode_query, query_text)
     qlit = _vec_literal(vec)
+
+    # SET LOCAL hnsw.ef_search trades a fixed amount of CPU for higher recall;
+    # only applies inside this transaction so other queries are unaffected.
+    await db.execute(text(f"SET LOCAL hnsw.ef_search = {int(settings.hnsw_ef_search)}"))
 
     code_rows = (await db.execute(HS_CODE_QUERY, {"q": qlit, "k": settings.retrieval_top_k})).mappings().all()
     train_rows = (await db.execute(TRAINING_QUERY, {"q": qlit, "k": settings.retrieval_top_k})).mappings().all()

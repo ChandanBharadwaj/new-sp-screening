@@ -52,6 +52,15 @@ class HsEntityIndex(Base):
 
 class HsTrainingExample(Base):
     __tablename__ = "hs_training_example"
+    __table_args__ = (
+        UniqueConstraint(
+            "source",
+            "source_id",
+            "hs_code",
+            name="uq_hs_training_example",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     source_id: Mapped[str | None] = mapped_column(Text)
@@ -64,6 +73,13 @@ class HsTrainingExample(Base):
 
 class SanctionedCommodity(Base):
     __tablename__ = "sanctioned_commodity"
+    __table_args__ = (
+        UniqueConstraint(
+            "source",
+            "source_record_id",
+            name="uq_sanctioned_commodity_source_recid",
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     source_record_id: Mapped[str | None] = mapped_column(Text)
@@ -80,6 +96,16 @@ class SanctionedCommodity(Base):
 
 class CountryRule(Base):
     __tablename__ = "country_rule"
+    __table_args__ = (
+        UniqueConstraint(
+            "origin_iso",
+            "destination_iso",
+            "sanctioned_commodity_id",
+            "restriction_type",
+            name="uq_country_rule",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     origin_iso: Mapped[str | None] = mapped_column(CHAR(2))
     destination_iso: Mapped[str | None] = mapped_column(CHAR(2))
