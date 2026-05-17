@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
@@ -57,8 +57,8 @@ SANCTIONS_SOURCES = [
 def _staleness_days(finished_at) -> int | None:
     if finished_at is None:
         return None
-    now = datetime.now(timezone.utc)
-    fa = finished_at if finished_at.tzinfo else finished_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(UTC)
+    fa = finished_at if finished_at.tzinfo else finished_at.replace(tzinfo=UTC)
     return max(0, int((now - fa).total_seconds() // 86400))
 
 
@@ -81,7 +81,7 @@ def _staleness_severity(days: int | None, *, sanctions: bool) -> str:
 
 
 @router.get("/system")
-async def system_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def system_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     pg_ok = False
     try:
         await db.execute(text("SELECT 1"))
@@ -114,7 +114,7 @@ async def models_status() -> dict[str, Any]:
 
 
 @router.get("/refdata")
-async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def refdata_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     hs_total = (await db.execute(select(func.count()).select_from(HsCode))).scalar_one()
     hs_by_level_rows = (
         await db.execute(select(HsCode.level, func.count()).group_by(HsCode.level))
@@ -181,7 +181,7 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
 
 
 @router.get("/sanctions")
-async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def sanctions_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     sanc_total = (await db.execute(select(func.count()).select_from(SanctionedCommodity))).scalar_one()
     rules_total = (await db.execute(select(func.count()).select_from(CountryRule))).scalar_one()
     by_source = dict(
@@ -243,7 +243,7 @@ async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, 
 
 
 @router.get("/rules")
-async def rules_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def rules_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     total = (await db.execute(select(func.count()).select_from(ScreeningRule))).scalar_one()
     active = (
         await db.execute(
@@ -254,7 +254,7 @@ async def rules_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]
 
 
 @router.get("/eval")
-async def eval_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def eval_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(select(EvalRun).order_by(EvalRun.ran_at.desc()).limit(20))
     ).scalars().all()
@@ -289,7 +289,7 @@ async def eval_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
 
 
 @router.get("/batches")
-async def batches_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def batches_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(select(BatchJob).order_by(BatchJob.created_at.desc()).limit(10))
     ).scalars().all()

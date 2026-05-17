@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,8 +49,8 @@ def _static_versions(request: Request) -> dict[str, Any] | None:
 async def screen(
     body: ShipmentIn,
     request: Request,
-    db: AsyncSession = Depends(db_session),
-    reg: ModelRegistry = Depends(models),
+    db: Annotated[AsyncSession, Depends(db_session)],
+    reg: Annotated[ModelRegistry, Depends(models)],
 ) -> dict[str, Any]:
     payload = await run_screen(
         db=db,
@@ -72,8 +72,8 @@ async def screen(
 async def classify(
     body: ShipmentIn,
     request: Request,
-    db: AsyncSession = Depends(db_session),
-    reg: ModelRegistry = Depends(models),
+    db: Annotated[AsyncSession, Depends(db_session)],
+    reg: Annotated[ModelRegistry, Depends(models)],
 ) -> dict[str, Any]:
     payload = await run_screen(
         db=db,

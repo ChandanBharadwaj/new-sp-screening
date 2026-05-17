@@ -1,7 +1,7 @@
 """Shared helpers for sanction-source ingesters: upsert + companion country_rule rows."""
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert

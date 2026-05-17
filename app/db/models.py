@@ -4,8 +4,8 @@ from datetime import date, datetime
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     ARRAY,
-    Boolean,
     CHAR,
+    Boolean,
     Date,
     DateTime,
     ForeignKey,

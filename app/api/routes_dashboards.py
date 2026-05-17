@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -10,7 +10,7 @@ router = APIRouter(prefix="/api/v1/dashboards", tags=["dashboards"])
 
 
 @router.get("/chapter-volume")
-async def chapter_volume(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def chapter_volume(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(
             text(
@@ -29,7 +29,7 @@ async def chapter_volume(db: AsyncSession = Depends(db_session)) -> dict[str, An
 
 
 @router.get("/sanction-hits-by-source")
-async def sanction_hits_by_source(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def sanction_hits_by_source(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(
             text(
@@ -48,7 +48,7 @@ async def sanction_hits_by_source(db: AsyncSession = Depends(db_session)) -> dic
 
 
 @router.get("/country-pair-heatmap")
-async def country_pair_heatmap(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def country_pair_heatmap(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(
             text(
@@ -70,7 +70,7 @@ async def country_pair_heatmap(db: AsyncSession = Depends(db_session)) -> dict[s
 
 
 @router.get("/score-histograms")
-async def score_histograms(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def score_histograms(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     """Bucketed top-1 score histogram from screening_result."""
     rows = (
         await db.execute(
@@ -98,7 +98,7 @@ async def score_histograms(db: AsyncSession = Depends(db_session)) -> dict[str, 
 
 
 @router.get("/override-rate-trend")
-async def override_rate_trend(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def override_rate_trend(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(
             text(

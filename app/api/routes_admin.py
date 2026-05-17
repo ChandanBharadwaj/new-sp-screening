@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from arq.connections import RedisSettings, create_pool
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -265,7 +265,7 @@ class ResetIn(BaseModel):
 
 
 @router.get("/refdata/sources")
-async def list_sources(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     hs_total = (await db.execute(select(func.count()).select_from(HsCode))).scalar_one()
     train_by_source_rows = (
         await db.execute(
@@ -370,7 +370,7 @@ async def run_source(source: str, body: RunIn | None = None) -> dict[str, Any]:
 
 
 @router.post("/refdata/run-all")
-async def run_all(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def run_all(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     """Enqueue every source that's ready to run, respecting depends_on ordering.
 
     Ordering is enforced lazily — the worker will run them serially in the order
@@ -425,7 +425,7 @@ DATA_TABLES = [
 
 
 @router.post("/refdata/reset")
-async def reset_data(body: ResetIn, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def reset_data(body: ResetIn, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     """Drop ingested data; leave source files on disk and (by default) leave
     operator-authored rules alone."""
     truncated: list[str] = []

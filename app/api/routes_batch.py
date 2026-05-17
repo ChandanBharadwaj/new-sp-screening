@@ -1,6 +1,6 @@
 import csv
 import io
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from arq.connections import RedisSettings, create_pool
@@ -20,7 +20,7 @@ REQUIRED_COLUMNS = {"commodity_text"}
 @router.post("/upload")
 async def upload(
     file: UploadFile,
-    db: AsyncSession = Depends(db_session),
+    db: Annotated[AsyncSession, Depends(db_session)],
 ) -> dict[str, Any]:
     raw = await file.read()
     text_buf = io.StringIO(raw.decode("utf-8-sig", errors="replace"))
@@ -61,7 +61,7 @@ async def upload(
 
 
 @router.get("/{batch_id}")
-async def get_batch(batch_id: UUID, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def get_batch(batch_id: UUID, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     row = (await db.execute(select(BatchJob).where(BatchJob.id == batch_id))).scalar_one_or_none()
     if not row:
         raise HTTPException(404, "batch not found")

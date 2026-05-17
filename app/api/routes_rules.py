@@ -1,6 +1,6 @@
 import asyncio
 import math
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -50,7 +50,8 @@ def _phrase_group_to_json(body: RuleIn) -> dict[str, Any] | None:
 
 @router.get("")
 async def list_rules(
-    active_only: bool = False, db: AsyncSession = Depends(db_session)
+    db: Annotated[AsyncSession, Depends(db_session)],
+    active_only: bool = False,
 ) -> dict[str, Any]:
     stmt = select(ScreeningRule).order_by(ScreeningRule.id.desc())
     if active_only:
@@ -62,8 +63,8 @@ async def list_rules(
 @router.post("", response_model=RuleOut)
 async def create_rule(
     body: RuleIn,
-    db: AsyncSession = Depends(db_session),
-    reg: ModelRegistry = Depends(models),
+    db: Annotated[AsyncSession, Depends(db_session)],
+    reg: Annotated[ModelRegistry, Depends(models)],
 ) -> dict[str, Any]:
     emb = await _embed_phrase(reg, body.phrase)
     rule = ScreeningRule(
@@ -86,7 +87,7 @@ async def create_rule(
 
 
 @router.get("/{rule_id}")
-async def get_rule(rule_id: int, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def get_rule(rule_id: int, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rule = (await db.execute(select(ScreeningRule).where(ScreeningRule.id == rule_id))).scalar_one_or_none()
     if not rule:
         raise HTTPException(404, "rule not found")
@@ -107,8 +108,8 @@ async def get_rule(rule_id: int, db: AsyncSession = Depends(db_session)) -> dict
 async def update_rule(
     rule_id: int,
     body: RuleIn,
-    db: AsyncSession = Depends(db_session),
-    reg: ModelRegistry = Depends(models),
+    db: Annotated[AsyncSession, Depends(db_session)],
+    reg: Annotated[ModelRegistry, Depends(models)],
 ) -> dict[str, Any]:
     current = (
         await db.execute(select(ScreeningRule).where(ScreeningRule.id == rule_id))
@@ -139,7 +140,7 @@ async def update_rule(
 
 @router.delete("/{rule_id}")
 async def deactivate_rule(
-    rule_id: int, db: AsyncSession = Depends(db_session)
+    rule_id: int, db: Annotated[AsyncSession, Depends(db_session)]
 ) -> dict[str, Any]:
     rule = (
         await db.execute(select(ScreeningRule).where(ScreeningRule.id == rule_id))
@@ -155,8 +156,8 @@ async def deactivate_rule(
 async def test_rule(
     rule_id: int,
     body: RuleTestIn,
-    db: AsyncSession = Depends(db_session),
-    reg: ModelRegistry = Depends(models),
+    db: Annotated[AsyncSession, Depends(db_session)],
+    reg: Annotated[ModelRegistry, Depends(models)],
 ) -> dict[str, Any]:
     rule = (
         await db.execute(select(ScreeningRule).where(ScreeningRule.id == rule_id))
@@ -192,7 +193,7 @@ async def test_rule(
 @router.post("/test-phrase")
 async def test_phrase(
     body: dict[str, Any],
-    reg: ModelRegistry = Depends(models),
+    reg: Annotated[ModelRegistry, Depends(models)],
 ) -> dict[str, Any]:
     """Test a draft phrase against sample text before saving the rule."""
     phrase = body.get("phrase")

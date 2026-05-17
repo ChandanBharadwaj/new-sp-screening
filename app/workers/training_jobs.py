@@ -7,7 +7,7 @@ and finalizes status/metrics on the row when done.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +35,7 @@ async def _finish_run(run_id: int, **fields: Any) -> None:
             return
         for k, v in fields.items():
             setattr(run, k, v)
-        run.finished_at = datetime.now(timezone.utc)
+        run.finished_at = datetime.now(UTC)
         await db.commit()
 
 

@@ -7,7 +7,7 @@ completes successfully.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.db.models import EvalJob
@@ -33,7 +33,7 @@ async def _finish_job(job_id: int, **fields: Any) -> None:
             return
         for k, v in fields.items():
             setattr(job, k, v)
-        job.finished_at = datetime.now(timezone.utc)
+        job.finished_at = datetime.now(UTC)
         await db.commit()
 
 

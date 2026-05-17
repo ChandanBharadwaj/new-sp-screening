@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from arq.connections import RedisSettings, create_pool
 from fastapi import APIRouter, Depends, HTTPException
@@ -54,7 +54,7 @@ async def run_ltr(body: TrainLtrIn | None = None) -> dict[str, Any]:
 
 
 @router.get("/runs")
-async def list_runs(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def list_runs(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(select(TrainingRun).order_by(TrainingRun.started_at.desc()).limit(20))
     ).scalars().all()
@@ -62,7 +62,7 @@ async def list_runs(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
 
 
 @router.get("/runs/{run_id}")
-async def get_run(run_id: int, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def get_run(run_id: int, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     r = await db.get(TrainingRun, run_id)
     if r is None:
         raise HTTPException(404, "unknown training run")

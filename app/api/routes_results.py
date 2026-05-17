@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1/results", tags=["results"])
 
 @router.get("")
 async def list_results(
-    db: AsyncSession = Depends(db_session),
+    db: Annotated[AsyncSession, Depends(db_session)],
     limit: int = Query(50, le=500),
     offset: int = 0,
     chapter: str | None = None,
@@ -58,7 +58,7 @@ async def list_results(
 
 
 @router.get("/{result_id}")
-async def get_result(result_id: UUID, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def get_result(result_id: UUID, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     res = (await db.execute(select(ScreeningResult).where(ScreeningResult.id == result_id))).scalar_one_or_none()
     if not res:
         raise HTTPException(404, "result not found")

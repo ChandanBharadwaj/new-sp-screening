@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -50,7 +50,7 @@ async def screen_one(ctx: dict, shipment_id: str, batch_id: str) -> dict:
             job = (await db.execute(select(BatchJob).where(BatchJob.id == bid))).scalar_one_or_none()
             if job:
                 job.completed_rows = (job.completed_rows or 0) + 1
-                job.updated_at = datetime.now(timezone.utc)
+                job.updated_at = datetime.now(UTC)
                 if job.completed_rows + (job.failed_rows or 0) >= (job.total_rows or 0):
                     job.status = "done"
             await db.commit()
@@ -60,7 +60,7 @@ async def screen_one(ctx: dict, shipment_id: str, batch_id: str) -> dict:
             job = (await db.execute(select(BatchJob).where(BatchJob.id == bid))).scalar_one_or_none()
             if job:
                 job.failed_rows = (job.failed_rows or 0) + 1
-                job.updated_at = datetime.now(timezone.utc)
+                job.updated_at = datetime.now(UTC)
                 if (job.completed_rows or 0) + job.failed_rows >= (job.total_rows or 0):
                     job.status = "failed" if (job.completed_rows or 0) == 0 else "done"
             await db.commit()

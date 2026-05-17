@@ -7,7 +7,7 @@ Status page renders and what operators edit from the UI.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
@@ -53,7 +53,7 @@ class ThresholdIn(BaseModel):
 
 
 @router.get("")
-async def list_thresholds(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def list_thresholds(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     await _ensure_seeded(db)
     rows = (await db.execute(select(Threshold).order_by(Threshold.key))).scalars().all()
     return {
@@ -71,7 +71,7 @@ async def list_thresholds(db: AsyncSession = Depends(db_session)) -> dict[str, A
 
 
 @router.put("")
-async def upsert_threshold(body: ThresholdIn, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def upsert_threshold(body: ThresholdIn, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     await _ensure_seeded(db)
     existing = await db.get(Threshold, body.key)
     if existing is None:
@@ -87,7 +87,7 @@ async def upsert_threshold(body: ThresholdIn, db: AsyncSession = Depends(db_sess
 
 
 @router.post("/reset")
-async def reset_to_yaml(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def reset_to_yaml(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     """Overwrite all UI-edited thresholds with the YAML seed values."""
     seed = _yaml_seed()
     if not seed:
