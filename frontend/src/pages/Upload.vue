@@ -51,6 +51,31 @@ const progressPct = computed(() => {
   if (!d) return 0;
   return (100 * (d.completed_rows + d.failed_rows)) / Math.max(d.total_rows, 1);
 });
+
+type ErrorRow = {
+  row_index: number;
+  raw_row: Record<string, string | null> | null;
+  error_message: string;
+  created_at: string | null;
+};
+
+const showErrors = ref(false);
+const errorsEnabled = computed(
+  () => !!batchId.value && showErrors.value && (status.data.value?.failed_rows ?? 0) > 0
+);
+
+const errors = useFetch<{ items: ErrorRow[]; total: number }>({
+  key: computed(() => ["batch-errors", batchId.value] as const),
+  enabled: errorsEnabled,
+  fetcher: () =>
+    api.get<{ items: ErrorRow[]; total: number }>(
+      `/api/v1/batch/${batchId.value}/errors?limit=500`
+    ),
+});
+
+const errorsCsvUrl = computed(() =>
+  batchId.value ? `/api/v1/batch/${batchId.value}/errors.csv` : "#"
+);
 </script>
 
 <template>
@@ -89,6 +114,51 @@ const progressPct = computed(() => {
         </div>
         <div class="w-full h-3 bg-slate-200 rounded overflow-hidden">
           <div class="h-3 bg-emerald-500" :style="{ width: progressPct + '%' }" />
+        </div>
+
+        <div v-if="status.data.value.failed_rows > 0" class="mt-4 pt-4 border-t">
+          <div class="flex items-center justify-between mb-2">
+            <button
+              class="text-sm text-blue-700 hover:underline"
+              @click="showErrors = !showErrors"
+            >
+              {{ showErrors ? "Hide" : "Show" }} {{ status.data.value.failed_rows }} failed rows
+            </button>
+            <a
+              :href="errorsCsvUrl"
+              class="text-sm text-slate-600 hover:text-slate-900"
+              download
+            >
+              Download errors as CSV
+            </a>
+          </div>
+          <div v-if="showErrors">
+            <p v-if="errors.isLoading.value" class="text-slate-500 text-sm">Loading errors…</p>
+            <table v-else-if="errors.data.value" class="w-full text-xs mt-2">
+              <thead>
+                <tr class="text-left uppercase text-slate-500">
+                  <th class="py-1">Row</th>
+                  <th>External ref</th>
+                  <th>Commodity</th>
+                  <th>Route</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="e in errors.data.value.items" :key="e.row_index" class="border-t align-top">
+                  <td class="py-1 font-mono">{{ e.row_index }}</td>
+                  <td>{{ e.raw_row?.external_ref ?? "—" }}</td>
+                  <td class="max-w-xs truncate" :title="e.raw_row?.commodity_text ?? ''">
+                    {{ e.raw_row?.commodity_text ?? "—" }}
+                  </td>
+                  <td class="font-mono">
+                    {{ e.raw_row?.origin_iso ?? "??" }} → {{ e.raw_row?.destination_iso ?? "??" }}
+                  </td>
+                  <td class="text-red-700">{{ e.error_message }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>

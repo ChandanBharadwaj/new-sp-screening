@@ -5,6 +5,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     ARRAY,
     CHAR,
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -220,6 +221,18 @@ class BatchJob(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | running | done | failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BatchJobError(Base):
+    __tablename__ = "batch_job_error"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("batch_job.id", ondelete="CASCADE"), nullable=False
+    )
+    row_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_row: Mapped[dict | None] = mapped_column(JSONB)
+    error_message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class TrainingRun(Base):
