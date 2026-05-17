@@ -8,13 +8,17 @@ from app.api import (
     routes_batch,
     routes_dashboards,
     routes_data,
+    routes_eval,
     routes_feedback,
     routes_hs,
+    routes_jobs,
     routes_results,
     routes_rules,
     routes_sanctions,
     routes_screen,
     routes_status,
+    routes_thresholds,
+    routes_training,
 )
 from app.config import settings
 from app.models.registry import load_models
@@ -56,6 +60,10 @@ app.include_router(routes_feedback.router)
 app.include_router(routes_dashboards.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_data.router)
+app.include_router(routes_training.router)
+app.include_router(routes_eval.router)
+app.include_router(routes_thresholds.router)
+app.include_router(routes_jobs.router)
 
 
 @app.get("/health")

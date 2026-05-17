@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import Any
 
-import yaml
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session
+from app.api.routes_thresholds import get_all as get_thresholds
 from app.config import settings
 from app.db.models import (
     BatchJob,
@@ -27,7 +26,6 @@ from app.models.registry import model_status
 router = APIRouter(prefix="/api/v1/status", tags=["status"])
 
 _started_at = time.time()
-THRESHOLDS_PATH = Path(__file__).resolve().parents[2] / "eval" / "ci" / "thresholds.yaml"
 
 REFDATA_SOURCES = [
     {"source": "HTS", "table": "hs_code"},
@@ -44,12 +42,6 @@ SANCTIONS_SOURCES = [
     {"source": "UN_CONSOLIDATED"},
     {"source": "EU_CONSOLIDATED"},
 ]
-
-
-def _load_thresholds() -> dict[str, float]:
-    if not THRESHOLDS_PATH.exists():
-        return {}
-    return yaml.safe_load(THRESHOLDS_PATH.read_text()) or {}
 
 
 @router.get("/system")
@@ -231,7 +223,7 @@ async def eval_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
         }
         for r in rows
     ]
-    thresholds = _load_thresholds()
+    thresholds = await get_thresholds(db)
     latest = next((r for r in runs if r["split"] == "test"), None)
     pass_fail = None
     if latest and thresholds:

@@ -6,7 +6,9 @@ from app.config import settings
 from app.models.registry import load_models
 from app.telemetry import configure_logging, log
 from app.workers.batch_screen import screen_one
+from app.workers.eval_jobs import run_eval_job
 from app.workers.refdata_jobs import run_refdata
+from app.workers.training_jobs import train_ltr
 
 
 async def startup(ctx: dict) -> None:
@@ -21,10 +23,13 @@ async def shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [screen_one, run_refdata]
+    functions = [screen_one, run_refdata, train_ltr, run_eval_job]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     max_jobs = 4
-    job_timeout = 60
+    # Training builds the LTR dataset by running retrieval against every gold
+    # query — that takes several minutes on a non-trivial split. Eval has the
+    # same shape. 1h is generous; nothing here is interactive.
+    job_timeout = 3600
     keep_result = 3600

@@ -11,7 +11,9 @@ import asyncio
 import importlib
 import json
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import insert as sa_insert
 
@@ -21,6 +23,8 @@ from app.telemetry import configure_logging, log
 from eval.metrics import confusion, latency, ranking
 
 GOLD_DIR = Path("eval/gold/splits")
+
+LogFn = Callable[[str], Awaitable[None] | None]
 
 
 def _load_split(split: str) -> list[dict]:
@@ -44,11 +48,12 @@ def _load_classifier(name: str):
     return mod.Classifier()
 
 
-async def _persist_run(report: dict) -> None:
+async def _persist_run(report: dict) -> int | None:
     try:
         async with SessionLocal() as db:
-            await db.execute(
-                sa_insert(EvalRun).values(
+            result = await db.execute(
+                sa_insert(EvalRun)
+                .values(
                     classifier=report["classifier"],
                     split=report["split"],
                     top1_subheading=report["metrics"]["top1_subheading"],
@@ -61,33 +66,58 @@ async def _persist_run(report: dict) -> None:
                     n_examples=report["n_examples"],
                     report_json=report,
                 )
+                .returning(EvalRun.id)
             )
+            new_id = result.scalar_one()
             await db.commit()
-            log.info("eval.run_persisted")
+            log.info("eval.run_persisted", eval_run_id=new_id)
+            return int(new_id)
     except Exception as e:
         log.warning("eval.run_persist_failed", error=str(e))
+        return None
 
 
-async def main_async(args) -> dict:
+async def _emit(log_fn: LogFn | None, msg: str) -> None:
+    if log_fn is None:
+        return
+    res = log_fn(msg)
+    if asyncio.iscoroutine(res):
+        await res
+
+
+async def run(
+    classifier: str,
+    split: str,
+    limit: int | None = None,
+    report_path: str | None = None,
+    log_fn: LogFn | None = None,
+) -> dict[str, Any]:
+    """Reusable entrypoint — CLI and the arq worker both call this.
+
+    Returns the report dict plus `eval_run_id` (None if persistence failed).
+    """
     configure_logging()
-    items = _load_split(args.split)
-    if args.limit:
-        items = items[: args.limit]
-    log.info("eval.start", classifier=args.classifier, split=args.split, n=len(items))
+    items = _load_split(split)
+    if limit:
+        items = items[:limit]
+    log.info("eval.start", classifier=classifier, split=split, n=len(items))
+    await _emit(log_fn, f"Loaded {len(items)} gold items from split={split}")
 
-    classifier = _load_classifier(args.classifier)
+    clf = _load_classifier(classifier)
+    await _emit(log_fn, f"Loaded classifier '{classifier}'")
 
     predictions: list[list[str]] = []
     gold: list[str] = []
     latencies: list[float] = []
     for idx, rec in enumerate(items):
         t0 = time.perf_counter()
-        preds = await classifier.classify(rec["description"])
+        preds = await clf.classify(rec["description"])
         latencies.append((time.perf_counter() - t0) * 1000)
         predictions.append(preds or [""])
         gold.append(rec["hs_code"])
         if (idx + 1) % 25 == 0:
             log.info("eval.progress", done=idx + 1, total=len(items))
+            await _emit(log_fn, f"Classified {idx + 1}/{len(items)}")
 
     metrics = {
         "top1_subheading": ranking.top_k_subheading(predictions, gold, 1),
@@ -100,8 +130,8 @@ async def main_async(args) -> dict:
     lat = latency.percentiles(latencies)
     conf_matrix = confusion.chapter_confusion(predictions, gold)
     report = {
-        "classifier": args.classifier,
-        "split": args.split,
+        "classifier": classifier,
+        "split": split,
         "n_examples": len(items),
         "metrics": metrics,
         "latency": lat,
@@ -112,20 +142,28 @@ async def main_async(args) -> dict:
     }
     log.info(
         "eval.done",
-        classifier=args.classifier,
-        split=args.split,
+        classifier=classifier,
+        split=split,
         top1_sub=metrics["top1_subheading"],
         top3_sub=metrics["top3_subheading"],
         top1_chap=metrics["top1_chapter"],
         p95_ms=lat["p95"],
     )
+    await _emit(
+        log_fn,
+        f"Done — top1_sub={metrics['top1_subheading']:.3f} "
+        f"top3_sub={metrics['top3_subheading']:.3f} "
+        f"top1_chap={metrics['top1_chapter']:.3f} "
+        f"p95={lat['p95']:.0f}ms",
+    )
 
-    if args.report:
-        Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.report).write_text(json.dumps(report, indent=2))
-        log.info("eval.report_written", path=args.report)
+    if report_path:
+        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(report_path).write_text(json.dumps(report, indent=2))
+        log.info("eval.report_written", path=report_path)
 
-    await _persist_run(report)
+    eval_run_id = await _persist_run(report)
+    report["eval_run_id"] = eval_run_id
     return report
 
 
@@ -136,7 +174,14 @@ def main() -> None:
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--report", type=str, default=None)
     args = p.parse_args()
-    asyncio.run(main_async(args))
+    asyncio.run(
+        run(
+            classifier=args.classifier,
+            split=args.split,
+            limit=args.limit,
+            report_path=args.report,
+        )
+    )
 
 
 if __name__ == "__main__":

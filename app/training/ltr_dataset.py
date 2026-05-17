@@ -16,7 +16,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +28,8 @@ from app.models.registry import load_models
 from app.pipeline import normalize, rerank
 from app.pipeline.retrieval import dense, entity, sparse, union
 from app.telemetry import configure_logging, log
+
+LogFn = Callable[[str], Awaitable[None] | None]
 
 
 def _grade(gold: str, candidate: str) -> int:
@@ -57,16 +61,33 @@ async def _features_for_query(db: AsyncSession, models, qtext: str) -> list[dict
     return cands
 
 
-async def main_async(gold_path: Path, out_path: Path, limit: int | None) -> None:
+async def _emit(log_fn: LogFn | None, msg: str) -> None:
+    if log_fn is None:
+        return
+    res = log_fn(msg)
+    if asyncio.iscoroutine(res):
+        await res
+
+
+async def build_dataset(
+    gold_path: Path,
+    out_path: Path,
+    limit: int | None,
+    log_fn: LogFn | None = None,
+) -> dict[str, Any]:
+    """Reusable entrypoint — CLI and the arq worker both call this."""
     configure_logging()
     models = load_models()
     rows: list[dict] = []
     qid = 0
+    await _emit(log_fn, f"Loading gold split from {gold_path}")
     async with SessionLocal() as db:
         with gold_path.open() as f:
             lines = f.readlines()
             if limit:
                 lines = lines[:limit]
+            total = len(lines)
+            await _emit(log_fn, f"Building features for {total} queries")
             for line in lines:
                 rec = json.loads(line)
                 gold_code = rec["hs_code"]
@@ -90,9 +111,12 @@ async def main_async(gold_path: Path, out_path: Path, limit: int | None) -> None
                 qid += 1
                 if qid % 50 == 0:
                     log.info("ltr_dataset.progress", q=qid, rows=len(rows))
+                    await _emit(log_fn, f"Built {qid}/{total} queries ({len(rows)} candidate rows)")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(out_path, index=False)
     log.info("ltr_dataset.done", out=str(out_path), n_queries=qid, n_rows=len(rows))
+    await _emit(log_fn, f"Wrote {len(rows)} rows for {qid} queries → {out_path}")
+    return {"out_path": str(out_path), "n_queries": qid, "n_rows": len(rows)}
 
 
 def main() -> None:
@@ -101,7 +125,7 @@ def main() -> None:
     p.add_argument("--out", type=Path, default=Path("artifacts/ltr_train.csv"))
     p.add_argument("--limit", type=int, default=None)
     args = p.parse_args()
-    asyncio.run(main_async(args.gold, args.out, args.limit))
+    asyncio.run(build_dataset(args.gold, args.out, args.limit))
 
 
 if __name__ == "__main__":

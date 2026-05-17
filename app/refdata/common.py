@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import RefdataRun
 from app.db.session import SessionLocal
 from app.telemetry import configure_logging, log
+from app.workers.log_helper import append_log
 
 
 @asynccontextmanager
@@ -21,6 +22,7 @@ async def with_run_logging(source: str, notes: str | None = None) -> AsyncIterat
         await db.commit()
         await db.refresh(run)
         log.info("refdata.run.started", source=source, run_id=run.id)
+        await append_log(db, "refdata_run", run.id, f"Started {source}")
         try:
             yield db, run
         except Exception as e:
@@ -29,6 +31,7 @@ async def with_run_logging(source: str, notes: str | None = None) -> AsyncIterat
             run.finished_at = datetime.now(timezone.utc)
             await db.merge(run)
             await db.commit()
+            await append_log(db, "refdata_run", run.id, f"FAILED: {e}", level="error")
             log.error("refdata.run.failed", source=source, run_id=run.id, error=str(e))
             raise
         else:
@@ -36,6 +39,12 @@ async def with_run_logging(source: str, notes: str | None = None) -> AsyncIterat
             run.finished_at = datetime.now(timezone.utc)
             await db.merge(run)
             await db.commit()
+            await append_log(
+                db,
+                "refdata_run",
+                run.id,
+                f"Success — rows_upserted={run.rows_upserted}",
+            )
             log.info(
                 "refdata.run.success",
                 source=source,
@@ -64,9 +73,16 @@ def batches(items: list, size: int = 64):
 
 
 async def mark_progress(db: AsyncSession, run: RefdataRun, rows: int) -> None:
-    """Update RefdataRun.rows_upserted mid-run so the UI can show progress."""
+    """Update RefdataRun.rows_upserted mid-run so the UI can show progress.
+
+    Also emits a JobLog line every 1000 rows so the SSE log panel reflects
+    progress without flooding the table.
+    """
+    prev = run.rows_upserted or 0
     run.rows_upserted = rows
     await db.commit()
+    if rows // 1000 != prev // 1000:
+        await append_log(db, "refdata_run", run.id, f"…upserted {rows} rows")
 
 
 def lazy_embedder():

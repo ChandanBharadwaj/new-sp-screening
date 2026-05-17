@@ -12,6 +12,8 @@ import HsBrowser from "./pages/HsBrowser";
 import SanctionsBrowser from "./pages/SanctionsBrowser";
 import RuleManager from "./pages/RuleManager";
 import Dashboards from "./pages/Dashboards";
+import Screen from "./pages/Screen";
+import TrainingEval from "./pages/TrainingEval";
 import "./index.css";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
@@ -28,6 +30,8 @@ function Layout({ children }: { children: React.ReactNode }) {
           <nav className="flex gap-1 ml-4 flex-wrap">
             <NavLink to="/status" className={link}>Status</NavLink>
             <NavLink to="/admin" className={link}>Admin</NavLink>
+            <NavLink to="/training" className={link}>Training & Eval</NavLink>
+            <NavLink to="/screen" className={link}>Screen</NavLink>
             <NavLink to="/data" className={link}>Data</NavLink>
             <NavLink to="/upload" className={link}>Upload</NavLink>
             <NavLink to="/results" className={link}>Results</NavLink>
@@ -52,6 +56,8 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/" element={<Navigate to="/status" />} />
             <Route path="/status" element={<Status />} />
             <Route path="/admin" element={<Admin />} />
+            <Route path="/training" element={<TrainingEval />} />
+            <Route path="/screen" element={<Screen />} />
             <Route path="/data" element={<Data />} />
             <Route path="/upload" element={<Upload />} />
             <Route path="/results" element={<Results />} />

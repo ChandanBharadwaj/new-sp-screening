@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
@@ -80,6 +81,128 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
       <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-3">{title}</h2>
       {children}
     </section>
+  );
+}
+
+type ThresholdRow = {
+  key: string;
+  value: number;
+  source: string;
+  updated_at: string | null;
+};
+
+function ThresholdsEditor() {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ["thresholds"],
+    queryFn: () =>
+      api.get<{ thresholds: ThresholdRow[]; yaml_seed: Record<string, number> }>(
+        "/api/v1/thresholds"
+      ),
+  });
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (q.data) {
+      const next: Record<string, string> = {};
+      for (const t of q.data.thresholds) next[t.key] = String(t.value);
+      setDrafts(next);
+    }
+  }, [q.data]);
+
+  const save = useMutation({
+    mutationFn: (body: { key: string; value: number }) =>
+      api.put<{ key: string; value: number }>("/api/v1/thresholds", body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["thresholds"] });
+      qc.invalidateQueries({ queryKey: ["status", "eval"] });
+    },
+  });
+
+  const resetYaml = useMutation({
+    mutationFn: () => api.post<{ reset: string[] }>("/api/v1/thresholds/reset", {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["thresholds"] });
+      qc.invalidateQueries({ queryKey: ["status", "eval"] });
+    },
+  });
+
+  if (q.isLoading || !q.data) return <p className="text-slate-500">Loading…</p>;
+
+  return (
+    <div>
+      <p className="text-xs text-slate-500 mb-3">
+        Live ship-gate thresholds. Edits here only affect the Status pass/fail badges; the CI
+        gate (<code>eval.ci.compare</code>) still reads <code>eval/ci/thresholds.yaml</code>.
+      </p>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs uppercase text-slate-500">
+            <th>Key</th>
+            <th>Current</th>
+            <th>YAML seed</th>
+            <th>Source</th>
+            <th>Updated</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {q.data.thresholds.map((t) => {
+            const draft = drafts[t.key] ?? String(t.value);
+            const changed = parseFloat(draft) !== t.value && !Number.isNaN(parseFloat(draft));
+            return (
+              <tr key={t.key} className="border-t">
+                <td className="py-2 font-mono">{t.key}</td>
+                <td>
+                  <input
+                    className="border rounded px-2 py-0.5 text-sm font-mono w-24"
+                    value={draft}
+                    onChange={(e) => setDrafts({ ...drafts, [t.key]: e.target.value })}
+                  />
+                </td>
+                <td className="text-xs font-mono text-slate-500">
+                  {q.data.yaml_seed[t.key] ?? "—"}
+                </td>
+                <td>
+                  <span
+                    className={
+                      "text-xs px-1.5 py-0.5 rounded " +
+                      (t.source === "ui" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600")
+                    }
+                  >
+                    {t.source}
+                  </span>
+                </td>
+                <td className="text-xs text-slate-500">
+                  {t.updated_at ? new Date(t.updated_at).toLocaleString() : "—"}
+                </td>
+                <td>
+                  <button
+                    className="text-xs bg-slate-900 text-white px-2 py-0.5 rounded disabled:opacity-30"
+                    disabled={!changed || save.isPending}
+                    onClick={() => save.mutate({ key: t.key, value: parseFloat(draft) })}
+                  >
+                    Save
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          className="text-xs bg-slate-200 px-2 py-1 rounded"
+          disabled={resetYaml.isPending}
+          onClick={() => resetYaml.mutate()}
+        >
+          Reset all to YAML seed
+        </button>
+        {save.isError && (
+          <span className="text-xs text-red-700">{(save.error as Error).message}</span>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -193,11 +316,20 @@ export default function Status() {
         )}
       </Card>
 
+      <Card title="Thresholds">
+        <ThresholdsEditor />
+      </Card>
+
       <Card title="Eval">
         {evalRuns.isLoading || !evalRuns.data ? (
           <p className="text-slate-500">Loading…</p>
         ) : evalRuns.data.runs.length === 0 ? (
-          <p className="text-slate-500 text-sm">No eval runs yet. Run <code className="text-xs">python -m eval.runners.run_eval --classifier pipeline --split test</code></p>
+          <p className="text-slate-500 text-sm">
+            No eval runs yet.{" "}
+            <Link to="/training" className="text-blue-700 hover:underline">
+              Run one from /training →
+            </Link>
+          </p>
         ) : (
           <>
             {evalRuns.data.latest_pass_fail && (

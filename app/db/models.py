@@ -186,3 +186,48 @@ class BatchJob(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | running | done | failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TrainingRun(Base):
+    __tablename__ = "training_run"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # "ltr"
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running | success | failed
+    error_message: Mapped[str | None] = mapped_column(Text)
+    params: Mapped[dict | None] = mapped_column(JSONB)
+    artifact_path: Mapped[str | None] = mapped_column(Text)
+    dataset_csv_path: Mapped[str | None] = mapped_column(Text)
+    metrics: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class EvalJob(Base):
+    __tablename__ = "eval_job"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    error_message: Mapped[str | None] = mapped_column(Text)
+    classifier: Mapped[str] = mapped_column(String(64), nullable=False)
+    split: Mapped[str] = mapped_column(String(16), nullable=False)
+    limit_n: Mapped[int | None] = mapped_column(Integer)
+    eval_run_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("eval_run.id"))
+
+
+class JobLog(Base):
+    __tablename__ = "job_log"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_table: Mapped[str] = mapped_column(String(32), nullable=False)  # refdata_run|training_run|eval_job
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    level: Mapped[str] = mapped_column(String(8), default="info")
+    line: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Threshold(Base):
+    __tablename__ = "threshold"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[float] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    source: Mapped[str] = mapped_column(String(16), default="ui")  # yaml_seed | ui
