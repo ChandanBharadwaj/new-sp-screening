@@ -1,7 +1,20 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { api } from "../api/client";
 import { useFetch, invalidateQueries } from "../api/useFetch";
+
+type RuleSourceFilter = "all" | "manual" | "materialized";
+
+const MATERIALIZED_PREFIX = "sanctions_source:";
+
+function isMaterialized(r: { created_by: string | null }): boolean {
+  return !!r.created_by && r.created_by.startsWith(MATERIALIZED_PREFIX);
+}
+
+function ruleOrigin(r: { created_by: string | null }): string {
+  if (isMaterialized(r)) return r.created_by!.slice(MATERIALIZED_PREFIX.length);
+  return "Manual";
+}
 
 type PhraseGroup = { mode: "any_of" | "all_of"; phrases: string[] };
 
@@ -62,6 +75,15 @@ const saveError = ref<Error | null>(null);
 const rules = useFetch<{ items: Rule[] }>({
   key: ["rules"],
   fetcher: () => api.get<{ items: Rule[] }>("/api/v1/rules"),
+});
+
+const sourceFilter = ref<RuleSourceFilter>("all");
+
+const filteredRules = computed<Rule[]>(() => {
+  const items = rules.data.value?.items ?? [];
+  if (sourceFilter.value === "manual") return items.filter((r) => !isMaterialized(r));
+  if (sourceFilter.value === "materialized") return items.filter(isMaterialized);
+  return items;
 });
 
 function buildBody() {
@@ -143,24 +165,66 @@ function beginEdit(r: Rule) {
 <template>
   <div class="grid md:grid-cols-2 gap-4">
     <section class="bg-white border rounded-lg p-4 shadow-sm">
-      <h2 class="text-sm uppercase text-slate-500 mb-2">Rules</h2>
+      <div class="flex items-center justify-between mb-2 gap-2">
+        <h2 class="text-sm uppercase text-slate-500">Rules</h2>
+        <label class="text-xs flex items-center gap-2">
+          Show:
+          <select v-model="sourceFilter" class="border rounded px-1 py-0.5 text-xs">
+            <option value="all">All</option>
+            <option value="manual">Manual only</option>
+            <option value="materialized">Materialized only</option>
+          </select>
+        </label>
+      </div>
       <p v-if="rules.isLoading.value || !rules.data.value" class="text-slate-500">Loading…</p>
       <p v-else-if="rules.data.value.items.length === 0" class="text-slate-500 text-sm">No rules yet. Create one →</p>
+      <p v-else-if="filteredRules.length === 0" class="text-slate-500 text-sm">
+        No rules match the current filter.
+      </p>
       <table v-else class="w-full text-sm">
         <thead>
           <tr class="text-left text-xs uppercase text-slate-500">
-            <th>Name</th><th>Phrase</th><th>Thr.</th><th>Route</th><th>Active</th><th></th>
+            <th>Name</th><th>Origin</th><th>Phrase</th><th>Thr.</th><th>Route</th><th>Active</th><th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in rules.data.value.items" :key="r.id" class="border-t">
+          <tr v-for="r in filteredRules" :key="r.id" class="border-t">
             <td class="py-1">{{ r.name }} <span class="text-slate-400 text-xs">v{{ r.version }}</span></td>
+            <td>
+              <span
+                class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono"
+                :class="
+                  isMaterialized(r)
+                    ? 'bg-indigo-100 text-indigo-800'
+                    : 'bg-slate-100 text-slate-700'
+                "
+                :title="
+                  isMaterialized(r)
+                    ? 'Materialized from sanctions source — managed in Admin → Semantic rule materialization'
+                    : 'Operator-authored rule'
+                "
+              >{{ ruleOrigin(r) }}</span>
+            </td>
             <td class="max-w-xs truncate" :title="r.phrase">{{ r.phrase }}</td>
             <td class="font-mono">{{ r.threshold.toFixed(2) }}</td>
             <td class="font-mono text-xs">{{ r.origin_iso ?? "*" }} → {{ r.destination_iso ?? "*" }}</td>
             <td>{{ r.active ? "✓" : "—" }}</td>
             <td>
-              <button class="text-xs text-blue-700 hover:underline" @click="beginEdit(r)">edit</button>
+              <button
+                class="text-xs hover:underline"
+                :class="
+                  isMaterialized(r)
+                    ? 'text-slate-400 cursor-not-allowed hover:no-underline'
+                    : 'text-blue-700'
+                "
+                :disabled="isMaterialized(r)"
+                :title="
+                  isMaterialized(r)
+                    ? 'Managed by sanctions source — edit in Admin → Semantic rule materialization'
+                    : ''
+                "
+                @click="!isMaterialized(r) && beginEdit(r)"
+              >edit</button>
             </td>
           </tr>
         </tbody>

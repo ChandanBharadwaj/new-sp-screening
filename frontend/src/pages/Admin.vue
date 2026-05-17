@@ -3,11 +3,20 @@ import { computed, ref } from "vue";
 import { api } from "../api/client";
 import { useFetch, invalidateQueries } from "../api/useFetch";
 import SourceCard, { type Source } from "../components/admin/SourceCard.vue";
+import RuleMaterializationPanel, {
+  type RuleMaterializationItem,
+} from "../components/admin/RuleMaterializationPanel.vue";
 
 const sources = useFetch<{ sources: Source[] }>({
   key: ["admin", "sources"],
   refetchInterval: 3000,
   fetcher: () => api.get<{ sources: Source[] }>("/api/v1/admin/refdata/sources"),
+});
+
+const ruleMaterialization = useFetch<{ items: RuleMaterializationItem[] }>({
+  key: ["admin", "rule-materialization"],
+  fetcher: () =>
+    api.get<{ items: RuleMaterializationItem[] }>("/api/v1/admin/rule-materialization"),
 });
 
 const runAllPending = ref(false);
@@ -114,5 +123,28 @@ const orderedKinds = computed(() =>
         </div>
       </div>
     </template>
+
+    <section class="bg-white border rounded-lg p-4 shadow-sm mt-2">
+      <h2 class="text-lg font-semibold">Semantic rule materialization</h2>
+      <p class="text-sm text-slate-600 mt-1">
+        Convert ingested commodity risk data (per source) into
+        <code class="font-mono text-xs">screening_rule</code> rows that the cross-encoder
+        evaluates at screen time. Off by default — flip a source on to opt in.
+        Operator-authored rules are unaffected and remain editable on the
+        <router-link to="/rules" class="text-blue-700 hover:underline">Rules</router-link>
+        page.
+      </p>
+      <p
+        v-if="ruleMaterialization.isLoading.value || !ruleMaterialization.data.value"
+        class="text-slate-500 text-sm mt-3"
+      >Loading…</p>
+      <div v-else class="grid gap-3 mt-3">
+        <RuleMaterializationPanel
+          v-for="it in ruleMaterialization.data.value.items"
+          :key="it.source"
+          :item="it"
+        />
+      </div>
+    </section>
   </div>
 </template>

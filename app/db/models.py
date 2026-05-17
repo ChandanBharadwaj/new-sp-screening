@@ -304,3 +304,23 @@ class Threshold(Base):
     value: Mapped[float] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     source: Mapped[str] = mapped_column(String(16), default="ui")  # yaml_seed | ui
+
+
+class SanctionsRuleConfig(Base):
+    """Per-source toggle + tuning for the ScreeningRule materializer.
+
+    One row per sanctions source key (e.g. 'OFAC_SDN', 'IRAN'). When `enabled`,
+    `app.refdata.sanctions.materialize_rules` upserts ScreeningRule rows derived
+    from the source's `sanctioned_commodity` + `country_rule` data after each
+    ingest. Off by default so flipping a source on is a deliberate operator action.
+    """
+
+    __tablename__ = "sanctions_rule_config"
+    source: Mapped[str] = mapped_column(Text, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    default_threshold: Mapped[float] = mapped_column(nullable=False, default=0.55)
+    # 'description_only' | 'with_aliases' | 'split_lists'
+    phrase_strategy: Mapped[str] = mapped_column(Text, nullable=False, default="split_lists")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

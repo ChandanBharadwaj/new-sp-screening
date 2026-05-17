@@ -12,6 +12,7 @@ disk and leaves operator-authored `screening_rule` rows alone unless
 from __future__ import annotations
 
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -28,7 +29,10 @@ from app.db.models import (
     HsTrainingExample,
     RefdataRun,
     SanctionedCommodity,
+    SanctionsRuleConfig,
+    ScreeningRule,
 )
+from app.refdata.sanctions import materialize_rules
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -477,3 +481,142 @@ async def list_files() -> dict[str, Any]:
                 }
             )
     return {"files": items}
+
+
+# ---------------------------------------------------------------------------
+# Semantic rule materialization — per-source toggle + on-demand re-run.
+# ---------------------------------------------------------------------------
+
+# Sources whose data flows into the materializer (kind == "sanctions" + has
+# sanctioned_commodity rows). Pulled from the canonical SOURCES catalog above.
+MATERIALIZABLE_SOURCES: list[str] = [s["source"] for s in SOURCES if s["kind"] == "sanctions"]
+
+VALID_PHRASE_STRATEGIES = ("description_only", "with_aliases", "split_lists")
+
+
+class RuleMaterializationConfigIn(BaseModel):
+    enabled: bool | None = None
+    default_threshold: float | None = None
+    phrase_strategy: str | None = None
+
+
+def _config_default_row(source: str) -> dict[str, Any]:
+    return {
+        "source": source,
+        "enabled": False,
+        "default_threshold": 0.55,
+        "phrase_strategy": "split_lists",
+        "updated_at": None,
+    }
+
+
+@router.get("/rule-materialization")
+async def list_rule_materialization(
+    db: Annotated[AsyncSession, Depends(db_session)],
+) -> dict[str, Any]:
+    """List per-source materialization config + counts of active materialized rules."""
+    cfg_rows = (await db.execute(select(SanctionsRuleConfig))).scalars().all()
+    cfg_by_source = {c.source: c for c in cfg_rows}
+
+    count_rows = (
+        await db.execute(
+            select(ScreeningRule.created_by, func.count())
+            .where(ScreeningRule.created_by.like("sanctions_source:%"))
+            .where(ScreeningRule.active.is_(True))
+            .group_by(ScreeningRule.created_by)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for created_by, n in count_rows:
+        # created_by looks like "sanctions_source:OFAC_SDN"
+        if isinstance(created_by, str) and ":" in created_by:
+            counts[created_by.split(":", 1)[1]] = int(n)
+
+    items: list[dict[str, Any]] = []
+    for src in MATERIALIZABLE_SOURCES:
+        meta = SOURCES_BY_NAME[src]
+        cfg = cfg_by_source.get(src)
+        row: dict[str, Any]
+        if cfg is None:
+            row = _config_default_row(src)
+        else:
+            row = {
+                "source": cfg.source,
+                "enabled": bool(cfg.enabled),
+                "default_threshold": float(cfg.default_threshold),
+                "phrase_strategy": cfg.phrase_strategy,
+                "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None,
+            }
+        row["label"] = meta["label"]
+        row["active_rules"] = int(counts.get(src, 0))
+        items.append(row)
+    return {"items": items}
+
+
+@router.put("/rule-materialization/{source}")
+async def update_rule_materialization(
+    source: str,
+    body: RuleMaterializationConfigIn,
+    db: Annotated[AsyncSession, Depends(db_session)],
+) -> dict[str, Any]:
+    if source not in MATERIALIZABLE_SOURCES:
+        raise HTTPException(404, f"unknown sanctions source: {source}")
+    if body.default_threshold is not None and not (0.0 <= body.default_threshold <= 1.0):
+        raise HTTPException(400, "default_threshold must be in [0.0, 1.0]")
+    if body.phrase_strategy is not None and body.phrase_strategy not in VALID_PHRASE_STRATEGIES:
+        raise HTTPException(
+            400,
+            f"phrase_strategy must be one of {VALID_PHRASE_STRATEGIES}",
+        )
+
+    existing = (
+        await db.execute(
+            select(SanctionsRuleConfig).where(SanctionsRuleConfig.source == source)
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        row = SanctionsRuleConfig(
+            source=source,
+            enabled=bool(body.enabled) if body.enabled is not None else False,
+            default_threshold=(
+                float(body.default_threshold) if body.default_threshold is not None else 0.55
+            ),
+            phrase_strategy=body.phrase_strategy or "split_lists",
+        )
+        db.add(row)
+    else:
+        if body.enabled is not None:
+            existing.enabled = bool(body.enabled)
+        if body.default_threshold is not None:
+            existing.default_threshold = float(body.default_threshold)
+        if body.phrase_strategy is not None:
+            existing.phrase_strategy = body.phrase_strategy
+        # Bump updated_at explicitly — server_default only fires on INSERT.
+        existing.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    cfg = (
+        await db.execute(
+            select(SanctionsRuleConfig).where(SanctionsRuleConfig.source == source)
+        )
+    ).scalar_one()
+    return {
+        "source": cfg.source,
+        "enabled": bool(cfg.enabled),
+        "default_threshold": float(cfg.default_threshold),
+        "phrase_strategy": cfg.phrase_strategy,
+        "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None,
+    }
+
+
+@router.post("/rule-materialization/{source}/run")
+async def run_rule_materialization(
+    source: str,
+    db: Annotated[AsyncSession, Depends(db_session)],
+) -> dict[str, Any]:
+    """Re-materialize ScreeningRule rows for `source` against current sanctioned_commodity
+    data. Does not re-ingest the source. No-op if config.enabled is false."""
+    if source not in MATERIALIZABLE_SOURCES:
+        raise HTTPException(404, f"unknown sanctions source: {source}")
+    counts = await materialize_rules.materialize_for_source(db, source)
+    return {"source": source, **counts}

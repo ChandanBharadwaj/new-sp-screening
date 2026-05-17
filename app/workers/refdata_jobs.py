@@ -9,11 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.db.session import SessionLocal
 from app.refdata.cross import ingest as cross_ingest
 from app.refdata.cross import scraper as cross_scraper
 from app.refdata.gold import assemble as gold_assemble
 from app.refdata.hs_entities import build as hs_entities
 from app.refdata.hts import ingest as hts_ingest
+from app.refdata.sanctions import materialize_rules
 from app.refdata.sanctions.bis_ccl import ingest as bis_ingest
 from app.refdata.sanctions.country_program import ingest as country_ingest
 from app.refdata.sanctions.eu_consolidated import ingest as eu_cons
@@ -25,6 +27,26 @@ from app.refdata.sanctions.un import ingest as un_ingest
 from app.refdata.schedule_b import ingest as sb_ingest
 from app.refdata.wco import ingest as wco_ingest
 from app.telemetry import log
+
+# Keys that route through a sanctions ingester and produce sanctioned_commodity
+# rows. After ingest we re-materialize ScreeningRule rows from these (gated by
+# sanctions_rule_config.enabled — no-op when off).
+SANCTIONS_SOURCES = frozenset(
+    {
+        "EU_DUAL_USE",
+        "EU_RUSSIA",
+        "BIS_CCL",
+        "OFAC_SDN",
+        "ITAR_USML",
+        "IRAN",
+        "DPRK",
+        "SYRIA",
+        "CUBA",
+        "VENEZUELA",
+        "UN_CONSOLIDATED",
+        "EU_CONSOLIDATED",
+    }
+)
 
 
 def _pathy(p: str | None) -> Path | None:
@@ -106,7 +128,19 @@ async def run_refdata(ctx: dict, source: str, params: dict[str, Any]) -> dict:
             )
         else:
             return {"status": "unknown_source", "source": source}
-        return {"status": "ok", "source": source}
+        # Materialize ScreeningRule rows for sanctions sources whose
+        # sanctions_rule_config.enabled is true. This is a cheap no-op for
+        # disabled sources (one indexed SELECT on sanctions_rule_config).
+        materialized: dict | None = None
+        if source in SANCTIONS_SOURCES:
+            try:
+                async with SessionLocal() as db:
+                    materialized = await materialize_rules.maybe_materialize_after_ingest(
+                        db, source
+                    )
+            except Exception as me:  # noqa: BLE001 — never let materialization mask ingest success
+                log.error("materialize_rules.post_ingest_failed", source=source, error=str(me))
+        return {"status": "ok", "source": source, "materialized": materialized}
     except Exception as e:
         log.error("refdata_job.failed", source=source, error=str(e))
         return {"status": "failed", "source": source, "error": str(e)}
