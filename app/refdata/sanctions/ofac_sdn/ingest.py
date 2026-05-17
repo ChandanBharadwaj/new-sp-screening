@@ -110,11 +110,14 @@ async def main_async(sdn_file: Path, add_file: Path | None, alt_file: Path | Non
             if sid is None:
                 continue
             for a in aliases:
+                # ON CONFLICT DO NOTHING against the (sanctioned_commodity_id, alias)
+                # unique constraint makes weekly re-ingest idempotent. The migration
+                # 0003 adds `uq_alias_per_commodity` for exactly this purpose.
                 stmt = pg_insert(SanctionedCommodityAlias).values(
                     sanctioned_commodity_id=sid,
                     alias=a["alias"][:500],
                     alias_kind=a.get("alias_kind"),
-                )
+                ).on_conflict_do_nothing(constraint="uq_alias_per_commodity")
                 await db.execute(stmt)
                 n_aliases += 1
         await db.commit()

@@ -14,6 +14,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
@@ -94,10 +95,16 @@ class SanctionedCommodityAlias(Base):
     Populated by ingesters that publish multiple names per entity (notably OFAC SDN's
     `alt.csv`). The trgm GIN index on `alias` powers fast fuzzy lookup at screening
     time without forcing each ingester to denormalize aliases into the main
-    description column.
+    description column. The unique constraint on (parent, alias) makes ingester
+    re-runs idempotent via ON CONFLICT DO NOTHING.
     """
 
     __tablename__ = "sanctioned_commodity_alias"
+    __table_args__ = (
+        UniqueConstraint(
+            "sanctioned_commodity_id", "alias", name="uq_alias_per_commodity"
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     sanctioned_commodity_id: Mapped[int] = mapped_column(
         ForeignKey("sanctioned_commodity.id", ondelete="CASCADE"), nullable=False

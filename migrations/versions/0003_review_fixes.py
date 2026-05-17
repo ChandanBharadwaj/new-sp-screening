@@ -45,6 +45,12 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
         ),
+        # Idempotency: re-running an ingester (e.g. weekly OFAC refresh) must not
+        # accumulate duplicate alias rows. Unique on (parent, alias) gives us a
+        # conflict target for ON CONFLICT DO NOTHING in the ingester.
+        sa.UniqueConstraint(
+            "sanctioned_commodity_id", "alias", name="uq_alias_per_commodity"
+        ),
     )
     op.execute(
         "CREATE INDEX ix_alias_sanctioned_commodity_id "

@@ -414,6 +414,7 @@ DATA_TABLES = [
     "eval_job",
     "training_run",
     "eval_run",
+    "sanctioned_commodity_alias",
     "country_rule",
     "sanctioned_commodity",
     "hs_entity_index",
