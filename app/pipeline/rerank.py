@@ -3,23 +3,33 @@ from app.models.reranker import Reranker
 
 
 def _candidate_text(c: dict) -> str:
-    parts = []
-    if c.get("title"):
-        parts.append(c["title"])
-    if c.get("description") and c.get("description") != c.get("title"):
-        parts.append(c["description"])
-    if not parts:
-        parts.append(f"HS code {c.get('hs_code', '')}")
-    return " | ".join(parts)
+    # Surface the HS code + chapter to the cross-encoder so it has a structured
+    # anchor (the encoder sees `"HS 854231 (ch 85): memory ICs. ..."` instead of
+    # plain prose). Helps disambiguate where multiple candidates share keywords.
+    code = c.get("hs_code") or ""
+    chapter = c.get("chapter") or ""
+    title = c.get("title") or ""
+    description = c.get("description") or ""
+    if description == title:
+        description = ""
+    head = f"HS {code} (ch {chapter}):" if code else "HS:"
+    body_parts = [p for p in (title, description) if p]
+    if not body_parts:
+        body_parts = ["(no description)"]
+    return f"{head} {' '.join(body_parts)}"
 
 
 def _retrieval_score(c: dict) -> float:
-    return max(
+    # When RRF is active, prefer the fused rank score for pre-rerank ordering —
+    # it captures cross-source agreement that any single signal misses.
+    rrf = float(c.get("rrf_score", 0.0))
+    legacy = max(
         c.get("dense_similarity", 0.0),
         c.get("dense_via_training", 0.0),
         c.get("sparse_score", 0.0),
         c.get("entity_overlap_score", 0.0),
     )
+    return max(rrf, legacy)
 
 
 def rerank(reranker: Reranker, query: str, candidates: list[dict]) -> list[dict]:

@@ -18,7 +18,11 @@ from pathlib import Path
 import pandas as pd
 
 from app.refdata.common import with_run_logging
-from app.refdata.sanctions.common import normalize_codes, upsert_sanctioned_commodities
+from app.refdata.sanctions.common import (
+    expand_rows_in_place,
+    normalize_codes,
+    upsert_sanctioned_commodities,
+)
 from app.telemetry import configure_logging, log
 
 PROVENANCE = "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A02014R0833"
@@ -89,6 +93,7 @@ async def main_async(file: Path, direction: str, annex_label: str) -> None:
         db,
         run,
     ):
+        await expand_rows_in_place(db, items)
         counts = await upsert_sanctioned_commodities(db, items, source="EU_RUSSIA", run=run)
         run.rows_upserted = counts["sanctioned"]
         run.notes = (run.notes or "") + f" | rules={counts['rules']}"

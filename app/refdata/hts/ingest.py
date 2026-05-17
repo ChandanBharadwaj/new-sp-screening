@@ -122,12 +122,14 @@ async def _upsert_rows(db: AsyncSession, rows: list[dict[str, Any]], run=None) -
     embedder = lazy_embedder()
     n = 0
     for batch in batches(rows, 64):
-        # For level-2 rows we mix chapter notes into the embedded text so legal
-        # cues (chapter scope, exclusions) are retrievable.
+        # Mix chapter notes into the embedded text at every level so legal cues
+        # (chapter scope, exclusions) are retrievable for headings and subheadings,
+        # not just for the chapter row itself. The same notes are carried by all
+        # rows in the chapter — embedding cost is paid once at ingest time.
         texts = []
         for r in batch:
             base = (r["title"] or "") + ". " + (r["description"] or "")
-            if r["level"] == 2 and r.get("chapter_notes"):
+            if r.get("chapter_notes"):
                 base = base + " || " + r["chapter_notes"][:2000]
             texts.append(base)
         vectors = embedder.encode_batch(texts)

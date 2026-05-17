@@ -18,7 +18,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.refdata.common import with_run_logging
-from app.refdata.sanctions.common import upsert_sanctioned_commodities
+from app.refdata.sanctions.common import insert_aliases, upsert_sanctioned_commodities
 from app.telemetry import configure_logging, log
 
 UN_XML_URL = "https://scsanctions.un.org/resources/xml/en/consolidated.xml"
@@ -50,6 +50,17 @@ async def _download(url: str, dest: Path) -> Path:
     return dest
 
 
+def _extract_aliases(ent) -> list[dict]:
+    """UN XML nests aliases under `<INDIVIDUAL_ALIAS>` / `<ENTITY_ALIAS>`."""
+    out: list[dict] = []
+    for tag in ent.find_all(["INDIVIDUAL_ALIAS", "ENTITY_ALIAS", "individual_alias", "entity_alias"]):
+        name_el = tag.find(["ALIAS_NAME", "alias_name"])
+        name = name_el.get_text(strip=True) if name_el else None
+        if name:
+            out.append({"alias": name, "alias_kind": "aka"})
+    return out
+
+
 def _parse(xml_path: Path) -> list[dict]:
     soup = BeautifulSoup(xml_path.read_text(encoding="utf-8", errors="replace"), "lxml-xml")
     items: list[dict] = []
@@ -72,6 +83,7 @@ def _parse(xml_path: Path) -> list[dict]:
                 "hs_codes": [],
                 "restriction_type": "prohibited",
                 "provenance_url": PROVENANCE,
+                "_aliases": _extract_aliases(ent),
             }
         )
     return items
@@ -82,11 +94,28 @@ async def main_async(file: Path | None, download: bool) -> None:
     if download or file is None:
         file = await _download(UN_XML_URL, DEFAULT_CACHE)
     items = _parse(file)
-    log.info("un.parsed", n=len(items))
+    log.info(
+        "un.parsed",
+        n=len(items),
+        with_aliases=sum(1 for r in items if r.get("_aliases")),
+    )
 
     async with with_run_logging("UN_CONSOLIDATED", notes=f"file={file}") as (db, run):
-        counts = await upsert_sanctioned_commodities(db, items, source="UN_CONSOLIDATED", run=run)
+        upsert_rows = [{k: v for k, v in r.items() if not k.startswith("_")} for r in items]
+        counts = await upsert_sanctioned_commodities(
+            db, upsert_rows, source="UN_CONSOLIDATED", run=run
+        )
         run.rows_upserted = counts["sanctioned"]
+        n_aliases = 0
+        for r in items:
+            n_aliases += await insert_aliases(
+                db,
+                source="UN_CONSOLIDATED",
+                source_record_id=r["source_record_id"],
+                aliases=r.get("_aliases") or [],
+            )
+        await db.commit()
+        run.notes = (run.notes or "") + f" | aliases={n_aliases}"
 
 
 def main() -> None:

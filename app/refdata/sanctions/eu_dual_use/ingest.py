@@ -20,7 +20,11 @@ from pathlib import Path
 import pandas as pd
 
 from app.refdata.common import with_run_logging
-from app.refdata.sanctions.common import normalize_codes, upsert_sanctioned_commodities
+from app.refdata.sanctions.common import (
+    expand_rows_in_place,
+    normalize_codes,
+    upsert_sanctioned_commodities,
+)
 from app.telemetry import configure_logging, log
 
 PROVENANCE = "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A02021R0821"
@@ -97,6 +101,7 @@ async def main_async(file: Path, crosswalk_path: Path | None) -> None:
     log.info("eu_dual_use.parsed", n=len(items), with_hs=sum(1 for r in items if r["hs_codes"]))
 
     async with with_run_logging("EU_DUAL_USE", notes=f"file={file}") as (db, run):
+        await expand_rows_in_place(db, items)
         counts = await upsert_sanctioned_commodities(db, items, source="EU_DUAL_USE", run=run)
         run.rows_upserted = counts["sanctioned"]
         run.notes = (run.notes or "") + f" | rules={counts['rules']}"

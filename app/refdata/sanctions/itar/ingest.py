@@ -25,7 +25,11 @@ from pathlib import Path
 import pandas as pd
 
 from app.refdata.common import with_run_logging
-from app.refdata.sanctions.common import normalize_codes, upsert_sanctioned_commodities
+from app.refdata.sanctions.common import (
+    expand_rows_in_place,
+    normalize_codes,
+    upsert_sanctioned_commodities,
+)
 from app.telemetry import configure_logging, log
 
 PROVENANCE = "https://www.ecfr.gov/current/title-22/chapter-I/subchapter-M/part-121"
@@ -102,6 +106,7 @@ async def main_async(file: Path) -> None:
     items = _parse(file)
     log.info("itar.parsed", n=len(items), with_hs=sum(1 for r in items if r["hs_codes"]))
     async with with_run_logging("ITAR_USML", notes=f"file={file}") as (db, run):
+        await expand_rows_in_place(db, items)
         counts = await upsert_sanctioned_commodities(db, items, source="ITAR_USML", run=run)
         run.rows_upserted = counts["sanctioned"]
         run.notes = (run.notes or "") + f" | rules={counts['rules']}"

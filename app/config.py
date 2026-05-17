@@ -17,6 +17,23 @@ class Settings(BaseSettings):
 
     rerank_top_k: int = 20
     retrieval_top_k: int = 50
+    sanctions_rerank_top_k: int = 10
+
+    # Hybrid retrieval blending. "rrf" is score-scale-invariant Reciprocal Rank
+    # Fusion (https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf); "max"
+    # is the legacy per-field max() blender — kept as a no-restart rollback.
+    fusion_mode: str = "rrf"
+    rrf_k: int = 60
+
+    # pgvector HNSW recall knob. Default index is built with the pgvector
+    # defaults (m=16, ef_construction=64); ef_search at query time is the
+    # leverage point that doesn't require an index rebuild.
+    hnsw_ef_search: int = 80
+
+    # BGE-small was trained with an asymmetric query-side instruction; without
+    # it recall is measurably lower. Documents stay unprefixed (ingesters call
+    # `encode_batch`/`encode_one`). Disable for A/B comparison.
+    embedder_use_query_prefix: bool = True
 
     log_level: str = "INFO"
 
