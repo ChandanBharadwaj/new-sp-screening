@@ -4,6 +4,11 @@ Fetches active rules whose (origin_iso, destination_iso) scope matches the shipm
 scores the cross-encoder over (normalized cargo text, rule.phrase), evaluates the
 small JSON conditions DSL, and returns per-rule quantitative results.
 
+Phrase composition: when a rule sets `phrase_group = {"mode": "any_of" | "all_of",
+"phrases": [...]}`, the cross-encoder scores each phrase and the rule's final
+`phrase_similarity` is max() (any_of) or min() (all_of) over those. When
+`phrase_group` is null, the legacy single `phrase` field is used.
+
 Conditions DSL (all optional, evaluated as AND):
     {
       "min_value": 5000.0,                  # shipment.shipment_value >= 5000
@@ -49,6 +54,31 @@ def _eval_conditions(cond: dict[str, Any] | None, shipment: dict[str, Any]) -> b
     return True
 
 
+def _phrases_for(rule: ScreeningRule) -> tuple[list[str], str]:
+    """Return (phrases_to_score, mode) for a rule.
+
+    mode is "single" | "any_of" | "all_of"; callers combine scores accordingly.
+    """
+    pg = rule.phrase_group
+    if pg and pg.get("phrases"):
+        mode = pg.get("mode") or "any_of"
+        if mode not in ("any_of", "all_of"):
+            mode = "any_of"
+        phrases = [p for p in pg["phrases"] if p]
+        if phrases:
+            return phrases, mode
+    return [rule.phrase], "single"
+
+
+def _combine(per_phrase: list[float], mode: str) -> float:
+    if not per_phrase:
+        return 0.0
+    if mode == "all_of":
+        return min(per_phrase)
+    # any_of and single both reduce to max() (single happens to have one element).
+    return max(per_phrase)
+
+
 async def score(
     *,
     db: AsyncSession,
@@ -70,13 +100,36 @@ async def score(
     if not rules:
         return []
 
-    phrases = [r.phrase for r in rules]
-    cross_scores = await asyncio.to_thread(reranker.score_pairs, cargo_text, phrases)
+    # Flatten (rule_index, phrase) pairs so we can score them in a single batched
+    # reranker call, then regroup.
+    flat: list[tuple[int, str]] = []
+    per_rule_modes: list[tuple[list[str], str]] = []
+    for i, rule in enumerate(rules):
+        phrases, mode = _phrases_for(rule)
+        per_rule_modes.append((phrases, mode))
+        for p in phrases:
+            flat.append((i, p))
+
+    if not flat:
+        return []
+
+    flat_phrases = [p for _, p in flat]
+    cross_scores = await asyncio.to_thread(reranker.score_pairs, cargo_text, flat_phrases)
     sims = [_sigmoid(s) for s in cross_scores]
 
+    # Regroup per-rule.
+    by_rule: list[list[float]] = [[] for _ in rules]
+    for (i, _), sim in zip(flat, sims, strict=True):
+        by_rule[i].append(float(sim))
+
     out: list[dict] = []
-    for rule, sim in zip(rules, sims, strict=True):
+    for rule, sims_for_rule, (phrases, mode) in zip(rules, by_rule, per_rule_modes, strict=True):
+        sim = _combine(sims_for_rule, mode)
         ok = _eval_conditions(rule.conditions, shipment)
+        per_phrase_view = [
+            {"phrase": p, "similarity": round(s, 4)}
+            for p, s in zip(phrases, sims_for_rule, strict=True)
+        ]
         out.append(
             {
                 "rule_id": rule.id,
@@ -87,6 +140,8 @@ async def score(
                 "delta_above_threshold": round(float(sim) - float(rule.threshold), 4),
                 "conditions_satisfied": bool(ok),
                 "version": rule.version,
+                "mode": mode,
+                "per_phrase": per_phrase_view,
             }
         )
     out.sort(key=lambda r: r["phrase_similarity"], reverse=True)

@@ -143,6 +143,20 @@ SOURCES: list[dict[str, Any]] = [
         "publisher_url": "https://www.bis.doc.gov/index.php/regulations/commerce-control-list-ccl",
     },
     {
+        "source": "OFAC_SDN",
+        "label": "US Treasury OFAC Specially Designated Nationals (SDN)",
+        "kind": "sanctions",
+        "auto_download": False,
+        "files": [
+            {"key": "sdn", "label": "sdn.csv", "path": "data/sanctions/ofac/sdn.csv", "accept": ".csv"},
+            {"key": "add", "label": "add.csv (addresses)", "path": "data/sanctions/ofac/add.csv", "accept": ".csv", "optional": True},
+            {"key": "alt", "label": "alt.csv (aliases)", "path": "data/sanctions/ofac/alt.csv", "accept": ".csv", "optional": True},
+        ],
+        "params_schema": {},
+        "depends_on": [],
+        "publisher_url": "https://sanctionslist.ofac.treas.gov/Home/SdnList",
+    },
+    {
         "source": "UN_CONSOLIDATED",
         "label": "UN Consolidated Sanctions List",
         "kind": "sanctions",

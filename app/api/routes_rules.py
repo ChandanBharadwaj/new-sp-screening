@@ -10,7 +10,7 @@ from app.api.deps import db_session, models
 from app.db.models import ScreeningRule
 from app.models.registry import ModelRegistry
 from app.pipeline.normalize import normalize
-from app.pipeline.rules import _eval_conditions
+from app.pipeline.rules import _combine, _eval_conditions, _phrases_for
 from app.schemas.rule import RuleIn, RuleOut, RuleTestIn, RuleTestOut
 
 router = APIRouter(prefix="/api/v1/rules", tags=["rules"])
@@ -21,6 +21,7 @@ def _serialize(r: ScreeningRule) -> dict[str, Any]:
         "id": r.id,
         "name": r.name,
         "phrase": r.phrase,
+        "phrase_group": r.phrase_group,
         "threshold": float(r.threshold),
         "conditions": r.conditions,
         "origin_iso": r.origin_iso,
@@ -39,6 +40,12 @@ def _sigmoid(x: float) -> float:
 async def _embed_phrase(reg: ModelRegistry, phrase: str) -> list[float]:
     vec = await asyncio.to_thread(reg.embedder.encode_one, phrase)
     return vec.tolist()
+
+
+def _phrase_group_to_json(body: RuleIn) -> dict[str, Any] | None:
+    if body.phrase_group is None:
+        return None
+    return {"mode": body.phrase_group.mode, "phrases": list(body.phrase_group.phrases)}
 
 
 @router.get("")
@@ -62,6 +69,7 @@ async def create_rule(
     rule = ScreeningRule(
         name=body.name,
         phrase=body.phrase,
+        phrase_group=_phrase_group_to_json(body),
         threshold=body.threshold,
         conditions=body.conditions,
         origin_iso=body.origin_iso,
@@ -113,6 +121,7 @@ async def update_rule(
     new = ScreeningRule(
         name=body.name,
         phrase=body.phrase,
+        phrase_group=_phrase_group_to_json(body),
         threshold=body.threshold,
         conditions=body.conditions,
         origin_iso=body.origin_iso,
@@ -155,8 +164,10 @@ async def test_rule(
     if not rule:
         raise HTTPException(404, "rule not found")
     norm = normalize(body.cargo_text)
-    scores = await asyncio.to_thread(reg.reranker.score_pairs, norm, [rule.phrase])
-    sim = _sigmoid(scores[0]) if scores else 0.0
+    phrases, mode = _phrases_for(rule)
+    scores = await asyncio.to_thread(reg.reranker.score_pairs, norm, phrases)
+    sims = [_sigmoid(s) for s in scores]
+    sim = _combine(sims, mode)
     ok = _eval_conditions(
         rule.conditions,
         {
@@ -165,11 +176,16 @@ async def test_rule(
             "metadata": body.metadata,
         },
     )
+    per_phrase = [
+        {"phrase": p, "similarity": round(s, 4)} for p, s in zip(phrases, sims, strict=True)
+    ]
     return {
         "phrase_similarity": round(float(sim), 4),
         "threshold": float(rule.threshold),
         "delta_above_threshold": round(float(sim) - float(rule.threshold), 4),
         "conditions_satisfied": bool(ok),
+        "mode": mode,
+        "per_phrase": per_phrase,
     }
 
 

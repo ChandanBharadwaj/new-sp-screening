@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, models
@@ -35,14 +35,20 @@ async def _persist(db: AsyncSession, shipment_in: ShipmentIn, payload: dict[str,
         confidence_metrics=payload["hs_classification"]["confidence_metrics"],
         latency_ms=payload["latency_ms"],
         engine_version=payload["engine_version"],
+        versions=payload.get("versions"),
     )
     db.add(res)
     await db.commit()
 
 
+def _static_versions(request: Request) -> dict[str, Any] | None:
+    return getattr(request.app.state, "versions_static", None)
+
+
 @router.post("/screen")
 async def screen(
     body: ShipmentIn,
+    request: Request,
     db: AsyncSession = Depends(db_session),
     reg: ModelRegistry = Depends(models),
 ) -> dict[str, Any]:
@@ -56,6 +62,7 @@ async def screen(
         shipment_value=body.shipment_value,
         currency=body.currency,
         metadata=body.metadata,
+        static_versions=_static_versions(request),
     )
     await _persist(db, body, payload)
     return payload
@@ -64,6 +71,7 @@ async def screen(
 @router.post("/classify")
 async def classify(
     body: ShipmentIn,
+    request: Request,
     db: AsyncSession = Depends(db_session),
     reg: ModelRegistry = Depends(models),
 ) -> dict[str, Any]:
@@ -77,5 +85,6 @@ async def classify(
         shipment_value=body.shipment_value,
         currency=body.currency,
         metadata=body.metadata,
+        static_versions=_static_versions(request),
     )
     return payload["hs_classification"]

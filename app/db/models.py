@@ -88,11 +88,34 @@ class CountryRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SanctionedCommodityAlias(Base):
+    """Alias / AKA / transliteration row joined to a sanctioned commodity.
+
+    Populated by ingesters that publish multiple names per entity (notably OFAC SDN's
+    `alt.csv`). The trgm GIN index on `alias` powers fast fuzzy lookup at screening
+    time without forcing each ingester to denormalize aliases into the main
+    description column.
+    """
+
+    __tablename__ = "sanctioned_commodity_alias"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    sanctioned_commodity_id: Mapped[int] = mapped_column(
+        ForeignKey("sanctioned_commodity.id", ondelete="CASCADE"), nullable=False
+    )
+    alias: Mapped[str] = mapped_column(Text, nullable=False)
+    alias_kind: Mapped[str | None] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ScreeningRule(Base):
     __tablename__ = "screening_rule"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     phrase: Mapped[str] = mapped_column(Text, nullable=False)
+    # Optional group form: {"any_of": [...]} or {"all_of": [...]}.
+    # When set, the per-phrase cross-encoder scores combine via max() / min() respectively.
+    # When null, only `phrase` is scored (legacy single-phrase rule).
+    phrase_group: Mapped[dict | None] = mapped_column(JSONB)
     embedding = mapped_column(Vector(EMBED_DIM), nullable=True)
     threshold: Mapped[float] = mapped_column(nullable=False)
     conditions: Mapped[dict | None] = mapped_column(JSONB)
@@ -129,6 +152,10 @@ class ScreeningResult(Base):
     confidence_metrics: Mapped[dict | None] = mapped_column(JSONB)
     latency_ms: Mapped[dict | None] = mapped_column(JSONB)
     engine_version: Mapped[str | None] = mapped_column(Text)
+    # Stamped per screening: engine, model hashes/IDs, refdata refresh timestamps.
+    # Shape: {"engine": "...", "ltr_hash": "sha256:...", "reranker": "...", "embedder": "...",
+    #         "ner": "...", "refdata": {"OFAC_SDN": "2026-05-12T03:00:00+00:00", ...}}
+    versions: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

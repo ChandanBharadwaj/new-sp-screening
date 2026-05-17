@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -35,13 +36,42 @@ REFDATA_SOURCES = [
     {"source": "GoldAssembly", "table": "eval/gold/splits"},
 ]
 
+# kind = "sanctions" sources are subject to the strict 7/30-day staleness gates;
+# kind = "taxonomy" gets the lax 90/365-day gates (HS rarely changes).
 SANCTIONS_SOURCES = [
+    {"source": "OFAC_SDN"},
     {"source": "EU_DUAL_USE"},
     {"source": "EU_RUSSIA"},
     {"source": "BIS_CCL"},
     {"source": "UN_CONSOLIDATED"},
     {"source": "EU_CONSOLIDATED"},
 ]
+
+
+def _staleness_days(finished_at) -> int | None:
+    if finished_at is None:
+        return None
+    now = datetime.now(timezone.utc)
+    fa = finished_at if finished_at.tzinfo else finished_at.replace(tzinfo=timezone.utc)
+    return max(0, int((now - fa).total_seconds() // 86400))
+
+
+def _staleness_severity(days: int | None, *, sanctions: bool) -> str:
+    """Map age-in-days to a severity tier ('green'|'amber'|'red'|'gray')."""
+    if days is None:
+        return "gray"
+    if sanctions:
+        if days <= 7:
+            return "green"
+        if days <= 30:
+            return "amber"
+        return "red"
+    # Taxonomy / reference data ages slower.
+    if days <= 90:
+        return "green"
+    if days <= 365:
+        return "amber"
+    return "red"
 
 
 @router.get("/system")
@@ -113,6 +143,7 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
             row_count = last_run.rows_upserted if last_run else 0
         else:
             row_count = train_by_source.get(s["source"], 0)
+        days = _staleness_days(last_run.finished_at) if last_run else None
         sources.append(
             {
                 "source": s["source"],
@@ -126,6 +157,8 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
                 if last_run
                 else {"status": "never_run"},
                 "row_count": int(row_count),
+                "staleness_days": days,
+                "staleness_severity": _staleness_severity(days, sanctions=False),
             }
         )
 
@@ -163,6 +196,7 @@ async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, 
                 .limit(1)
             )
         ).scalar_one_or_none()
+        days = _staleness_days(last_run.finished_at) if last_run else None
         sources.append(
             {
                 "source": s["source"],
@@ -178,11 +212,23 @@ async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, 
                     if last_run
                     else {"status": "never_run"}
                 ),
+                "staleness_days": days,
+                "staleness_severity": _staleness_severity(days, sanctions=True),
             }
         )
 
+    # Surface the worst sanctions-source severity so the UI can render a
+    # top-of-page banner without recomputing the policy.
+    severity_order = {"green": 0, "amber": 1, "gray": 2, "red": 3}
+    worst = max(
+        (s["staleness_severity"] for s in sources),
+        key=lambda sev: severity_order.get(sev, 0),
+        default="gray",
+    )
+
     return {
         "sources": sources,
+        "worst_staleness_severity": worst,
         "totals": {
             "sanctioned_commodity": int(sanc_total),
             "country_rule": int(rules_total),

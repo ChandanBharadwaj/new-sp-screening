@@ -18,6 +18,7 @@ from app.refdata.sanctions.bis_ccl import ingest as bis_ingest
 from app.refdata.sanctions.eu_consolidated import ingest as eu_cons
 from app.refdata.sanctions.eu_dual_use import ingest as eu_du
 from app.refdata.sanctions.eu_russia import ingest as eu_ru
+from app.refdata.sanctions.ofac_sdn import ingest as ofac_ingest
 from app.refdata.sanctions.un import ingest as un_ingest
 from app.refdata.schedule_b import ingest as sb_ingest
 from app.telemetry import log
@@ -74,6 +75,12 @@ async def run_refdata(ctx: dict, source: str, params: dict[str, Any]) -> dict:
             await bis_ingest.main_async(
                 _pathy(params.get("ccl_file")) or Path("data/sanctions/bis_ccl.csv"),
                 _pathy(params.get("crosswalk_file")),
+            )
+        elif source == "OFAC_SDN":
+            await ofac_ingest.main_async(
+                _pathy(params.get("sdn")) or Path("data/sanctions/ofac/sdn.csv"),
+                _pathy(params.get("add")) or Path("data/sanctions/ofac/add.csv"),
+                _pathy(params.get("alt")) or Path("data/sanctions/ofac/alt.csv"),
             )
         elif source == "UN_CONSOLIDATED":
             await un_ingest.main_async(_pathy(params.get("file")), download=True)

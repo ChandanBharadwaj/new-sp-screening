@@ -42,3 +42,27 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://screening:screening@localhost:5432/screening
           DATABASE_URL_SYNC: postgresql://screening:screening@localhost:5432/screening
         run: alembic upgrade head
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install ".[test]"
+      - run: pytest tests/
+
+  vitest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: npm test

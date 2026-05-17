@@ -29,7 +29,6 @@ eval/reports/
 frontend/node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
-frontend/package-lock.json
 
 # OS
 .DS_Store
