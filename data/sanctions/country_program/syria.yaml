@@ -1,0 +1,22 @@
+# OFAC Syrian Sanctions Regulations (31 CFR Part 542) + EO 13582 + Caesar Act.
+# Seed list — replace with your own legal-reviewed inventory before production use.
+source: SYRIA
+country_iso: SY
+provenance_url: https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-542
+restrictions:
+  - description: "All US exports/reexports to Syria (542.207)"
+    hs_codes: []
+    restriction_type: prohibited
+    direction: export_to
+  - description: "Syrian-origin petroleum and petroleum products (542.208)"
+    hs_codes: ["2709", "2710"]
+    restriction_type: prohibited
+    direction: import_from
+  - description: "Goods and services to GOS / SDN-linked Syrian entities"
+    hs_codes: []
+    restriction_type: blocked
+    direction: export_to
+  - description: "Items in support of Syria's reconstruction (Caesar Act §7412)"
+    hs_codes: ["6810", "6811", "7308"]
+    restriction_type: blocked
+    direction: export_to

@@ -1,0 +1,26 @@
+# OFAC North Korea Sanctions Regulations (31 CFR Part 510) + EO 13722/13810.
+# Comprehensive embargo; seed list — replace before production use.
+source: DPRK
+country_iso: KP
+provenance_url: https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-510
+restrictions:
+  - description: "All exports/reexports to North Korea (510.206)"
+    hs_codes: []
+    restriction_type: prohibited
+    direction: export_to
+  - description: "All imports of goods, services, technology from North Korea"
+    hs_codes: []
+    restriction_type: prohibited
+    direction: import_from
+  - description: "Coal, iron ore, lead, lead ore (UNSCR 2371)"
+    hs_codes: ["2701", "2601", "7801", "2607"]
+    restriction_type: prohibited
+    direction: import_from
+  - description: "Textiles, fish, seafood (UNSCR 2375)"
+    hs_codes: ["5005", "5208", "0301", "0302", "0303", "0304", "0306"]
+    restriction_type: prohibited
+    direction: import_from
+  - description: "Refined petroleum products to DPRK (UNSCR 2397, capped)"
+    hs_codes: ["2710"]
+    restriction_type: prohibited
+    direction: export_to

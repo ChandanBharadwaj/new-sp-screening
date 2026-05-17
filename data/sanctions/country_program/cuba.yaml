@@ -1,0 +1,22 @@
+# OFAC Cuban Assets Control Regulations (31 CFR Part 515).
+# Seed list — replace with your own legal-reviewed inventory before production use.
+source: CUBA
+country_iso: CU
+provenance_url: https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-515
+restrictions:
+  - description: "All US exports to Cuba unless licensed (515.533)"
+    hs_codes: []
+    restriction_type: licensed
+    direction: export_to
+  - description: "Cuban-origin merchandise (515.204)"
+    hs_codes: []
+    restriction_type: prohibited
+    direction: import_from
+  - description: "Cuban rum, tobacco, cigars"
+    hs_codes: ["2208", "2401", "2402"]
+    restriction_type: prohibited
+    direction: import_from
+  - description: "Telecommunications goods authorized under General License (515.578)"
+    hs_codes: ["8517"]
+    restriction_type: licensed
+    direction: export_to

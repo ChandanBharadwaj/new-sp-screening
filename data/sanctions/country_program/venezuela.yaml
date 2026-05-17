@@ -1,0 +1,22 @@
+# OFAC Venezuela Sanctions Regulations (31 CFR Parts 591 & 592) + EO 13884.
+# Sectoral, not comprehensive; seed list — replace before production use.
+source: VENEZUELA
+country_iso: VE
+provenance_url: https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-591
+restrictions:
+  - description: "Venezuelan-origin crude oil and petroleum products (EO 13884)"
+    hs_codes: ["2709", "2710"]
+    restriction_type: blocked
+    direction: import_from
+  - description: "Venezuelan gold (EO 13850)"
+    hs_codes: ["7108"]
+    restriction_type: blocked
+    direction: import_from
+  - description: "Goods/services to PdVSA and Venezuelan state-owned oil entities"
+    hs_codes: []
+    restriction_type: blocked
+    direction: export_to
+  - description: "Naphtha and diluents exported to Venezuela (PdVSA dilution use)"
+    hs_codes: ["2710"]
+    restriction_type: blocked
+    direction: export_to

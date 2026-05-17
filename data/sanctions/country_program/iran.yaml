@@ -1,0 +1,26 @@
+# OFAC Iranian Transactions and Sanctions Regulations (31 CFR Part 560) + CAATSA.
+# Seed list — replace with your own legal-reviewed inventory before production use.
+source: IRAN
+country_iso: IR
+provenance_url: https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-560
+restrictions:
+  - description: "Iranian-origin crude oil and petroleum products (560.206)"
+    hs_codes: ["2709", "2710"]
+    restriction_type: blocked
+    direction: import_from
+  - description: "Iranian-origin petrochemical products"
+    hs_codes: ["2901", "2902", "2905"]
+    restriction_type: blocked
+    direction: import_from
+  - description: "US export of goods, services, and technology to Iran (560.204)"
+    hs_codes: []
+    restriction_type: prohibited
+    direction: export_to
+  - description: "Civil aircraft and parts exported to Iran — license required"
+    hs_codes: ["8802", "8803"]
+    restriction_type: licensed
+    direction: export_to
+  - description: "Iranian-origin carpets and foodstuffs (rugs, pistachios, caviar)"
+    hs_codes: ["5701", "5702", "0802", "1604"]
+    restriction_type: blocked
+    direction: import_from

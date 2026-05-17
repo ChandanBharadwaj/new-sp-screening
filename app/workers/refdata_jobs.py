@@ -15,9 +15,11 @@ from app.refdata.gold import assemble as gold_assemble
 from app.refdata.hs_entities import build as hs_entities
 from app.refdata.hts import ingest as hts_ingest
 from app.refdata.sanctions.bis_ccl import ingest as bis_ingest
+from app.refdata.sanctions.country_program import ingest as country_ingest
 from app.refdata.sanctions.eu_consolidated import ingest as eu_cons
 from app.refdata.sanctions.eu_dual_use import ingest as eu_du
 from app.refdata.sanctions.eu_russia import ingest as eu_ru
+from app.refdata.sanctions.itar import ingest as itar_ingest
 from app.refdata.sanctions.ofac_sdn import ingest as ofac_ingest
 from app.refdata.sanctions.un import ingest as un_ingest
 from app.refdata.schedule_b import ingest as sb_ingest
@@ -82,6 +84,15 @@ async def run_refdata(ctx: dict, source: str, params: dict[str, Any]) -> dict:
                 _pathy(params.get("add")) or Path("data/sanctions/ofac/add.csv"),
                 _pathy(params.get("alt")) or Path("data/sanctions/ofac/alt.csv"),
             )
+        elif source == "ITAR_USML":
+            await itar_ingest.main_async(
+                _pathy(params.get("file")) or Path("data/sanctions/itar/usml.csv")
+            )
+        elif source in ("IRAN", "DPRK", "SYRIA", "CUBA", "VENEZUELA"):
+            # All country-program sources route through the generic YAML ingester.
+            # Default file path follows the SOURCES catalog: <slug>.yaml.
+            default = Path(f"data/sanctions/country_program/{source.lower()}.yaml")
+            await country_ingest.main_async(_pathy(params.get("file")) or default)
         elif source == "UN_CONSOLIDATED":
             await un_ingest.main_async(_pathy(params.get("file")), download=True)
         elif source == "EU_CONSOLIDATED":

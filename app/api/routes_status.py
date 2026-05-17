@@ -40,11 +40,17 @@ REFDATA_SOURCES = [
 # kind = "taxonomy" gets the lax 90/365-day gates (HS rarely changes).
 SANCTIONS_SOURCES = [
     {"source": "OFAC_SDN"},
+    {"source": "ITAR_USML"},
     {"source": "EU_DUAL_USE"},
     {"source": "EU_RUSSIA"},
     {"source": "BIS_CCL"},
     {"source": "UN_CONSOLIDATED"},
     {"source": "EU_CONSOLIDATED"},
+    {"source": "IRAN"},
+    {"source": "DPRK"},
+    {"source": "SYRIA"},
+    {"source": "CUBA"},
+    {"source": "VENEZUELA"},
 ]
 
 
