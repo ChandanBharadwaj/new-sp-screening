@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +28,7 @@ async def with_run_logging(source: str, notes: str | None = None) -> AsyncIterat
         except Exception as e:
             run.status = "failed"
             run.error_message = str(e)[:2000]
-            run.finished_at = datetime.now(timezone.utc)
+            run.finished_at = datetime.now(UTC)
             await db.merge(run)
             await db.commit()
             await append_log(db, "refdata_run", run.id, f"FAILED: {e}", level="error")
@@ -36,7 +36,7 @@ async def with_run_logging(source: str, notes: str | None = None) -> AsyncIterat
             raise
         else:
             run.status = "success"
-            run.finished_at = datetime.now(timezone.utc)
+            run.finished_at = datetime.now(UTC)
             await db.merge(run)
             await db.commit()
             await append_log(

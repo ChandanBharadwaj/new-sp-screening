@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select, text
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/v1/sanctions", tags=["sanctions"])
 
 
 @router.get("/sources")
-async def list_sources(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(
             select(SanctionedCommodity.source, func.count())
@@ -24,10 +24,10 @@ async def list_sources(db: AsyncSession = Depends(db_session)) -> dict[str, Any]
 
 @router.get("/by-country-pair")
 async def by_country_pair(
+    db: Annotated[AsyncSession, Depends(db_session)],
     origin: str | None = None,
     destination: str | None = None,
     limit: int = 200,
-    db: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
     rows = (
         await db.execute(
@@ -67,7 +67,7 @@ async def by_country_pair(
 
 
 @router.get("/heatmap")
-async def heatmap(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def heatmap(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(
             select(
@@ -91,7 +91,7 @@ async def heatmap(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
 
 
 @router.get("/{sanction_id}")
-async def get_sanction(sanction_id: int, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def get_sanction(sanction_id: int, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     row = (
         await db.execute(select(SanctionedCommodity).where(SanctionedCommodity.id == sanction_id))
     ).scalar_one_or_none()

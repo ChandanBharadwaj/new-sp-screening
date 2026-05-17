@@ -7,7 +7,7 @@ operator never has to drop to a shell to inspect what landed.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/v1/data", tags=["data"])
 
 @router.get("/training-examples")
 async def list_training_examples(
-    db: AsyncSession = Depends(db_session),
+    db: Annotated[AsyncSession, Depends(db_session)],
     source: str | None = None,
     q: str | None = None,
     chapter: str | None = None,
@@ -70,7 +70,7 @@ async def list_training_examples(
 
 @router.get("/shipments")
 async def list_shipments(
-    db: AsyncSession = Depends(db_session),
+    db: Annotated[AsyncSession, Depends(db_session)],
     q: str | None = None,
     limit: int = Query(50, le=500),
     offset: int = 0,
@@ -105,7 +105,7 @@ async def list_shipments(
 
 @router.get("/eval-runs")
 async def list_eval_runs(
-    db: AsyncSession = Depends(db_session),
+    db: Annotated[AsyncSession, Depends(db_session)],
     limit: int = Query(50, le=500),
 ) -> dict[str, Any]:
     rows = (
@@ -133,7 +133,7 @@ async def list_eval_runs(
 
 @router.get("/refdata-runs")
 async def list_refdata_runs(
-    db: AsyncSession = Depends(db_session),
+    db: Annotated[AsyncSession, Depends(db_session)],
     source: str | None = None,
     limit: int = Query(50, le=500),
 ) -> dict[str, Any]:

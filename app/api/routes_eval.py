@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from arq.connections import RedisSettings, create_pool
 from fastapi import APIRouter, Depends, HTTPException
@@ -51,7 +51,7 @@ async def run(body: EvalRunIn) -> dict[str, Any]:
 
 
 @router.get("/jobs")
-async def list_jobs(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def list_jobs(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(select(EvalJob).order_by(EvalJob.started_at.desc()).limit(20))
     ).scalars().all()
@@ -59,7 +59,7 @@ async def list_jobs(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(job_id: int, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def get_job(job_id: int, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     j = await db.get(EvalJob, job_id)
     if j is None:
         raise HTTPException(404, "unknown eval job")

@@ -31,14 +31,26 @@ jobs:
       - run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
       - run: pip install .
       - run: alembic upgrade head
+      - name: Check for gold splits
+        id: gold
+        run: |
+          if [ -f eval/gold/splits/test.jsonl ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::eval/gold/splits/test.jsonl missing — soft-skipping the eval job. Seed splits via GoldAssembly in the Admin UI (see eval/gold/README.md) to enable the gate."
+          fi
       - name: Run eval — baseline
+        if: steps.gold.outputs.exists == 'true'
         run: |
           mkdir -p eval/reports
           python -m eval.runners.run_eval --classifier baseline_noop --split test --report eval/reports/baseline.json
       - name: CI gate (compares baseline run against thresholds — expected to fail until Phase 1 pipeline is wired)
+        if: steps.gold.outputs.exists == 'true'
         continue-on-error: true
         run: python -m eval.ci.compare --report eval/reports/baseline.json
       - uses: actions/upload-artifact@v4
+        if: steps.gold.outputs.exists == 'true'
         with:
           name: eval-report
           path: eval/reports/

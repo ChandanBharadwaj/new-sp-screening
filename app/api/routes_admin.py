@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from arq.connections import RedisSettings, create_pool
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -77,6 +77,23 @@ SOURCES: list[dict[str, Any]] = [
         },
         "depends_on": [],
         "publisher_url": "https://rulings.cbp.gov/",
+    },
+    {
+        "source": "WCO",
+        "label": "WCO International HS Nomenclature",
+        "kind": "taxonomy",
+        "auto_download": False,
+        "files": [
+            {
+                "key": "file",
+                "label": "WCO HS XLSX",
+                "path": "data/taxonomy/wco_hs_2022.xlsx",
+                "accept": ".xlsx,.xls",
+            }
+        ],
+        "params_schema": {},
+        "depends_on": [],
+        "publisher_url": "https://www.wcoomd.org/en/topics/nomenclature/instrument-and-tools/hs-nomenclature-2022-edition.aspx",
     },
     {
         "source": "HsEntityIndex",
@@ -143,6 +160,92 @@ SOURCES: list[dict[str, Any]] = [
         "publisher_url": "https://www.bis.doc.gov/index.php/regulations/commerce-control-list-ccl",
     },
     {
+        "source": "OFAC_SDN",
+        "label": "US Treasury OFAC Specially Designated Nationals (SDN)",
+        "kind": "sanctions",
+        "auto_download": False,
+        "files": [
+            {"key": "sdn", "label": "sdn.csv", "path": "data/sanctions/ofac/sdn.csv", "accept": ".csv"},
+            {"key": "add", "label": "add.csv (addresses)", "path": "data/sanctions/ofac/add.csv", "accept": ".csv", "optional": True},
+            {"key": "alt", "label": "alt.csv (aliases)", "path": "data/sanctions/ofac/alt.csv", "accept": ".csv", "optional": True},
+        ],
+        "params_schema": {},
+        "depends_on": [],
+        "publisher_url": "https://sanctionslist.ofac.treas.gov/Home/SdnList",
+    },
+    {
+        "source": "ITAR_USML",
+        "label": "US Munitions List (ITAR, 22 CFR § 121)",
+        "kind": "sanctions",
+        "auto_download": False,
+        "files": [
+            {"key": "file", "label": "USML CSV/XLSX", "path": "data/sanctions/itar/usml.csv", "accept": ".csv,.xlsx,.xls"},
+        ],
+        "params_schema": {},
+        "depends_on": [],
+        "publisher_url": "https://www.ecfr.gov/current/title-22/chapter-I/subchapter-M/part-121",
+    },
+    {
+        "source": "IRAN",
+        "label": "US sanctions on Iran (31 CFR Part 560)",
+        "kind": "sanctions",
+        "auto_download": False,
+        "files": [
+            {"key": "file", "label": "iran.yaml", "path": "data/sanctions/country_program/iran.yaml", "accept": ".yaml,.yml"},
+        ],
+        "params_schema": {},
+        "depends_on": ["HTS"],
+        "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-560",
+    },
+    {
+        "source": "DPRK",
+        "label": "US sanctions on North Korea (31 CFR Part 510)",
+        "kind": "sanctions",
+        "auto_download": False,
+        "files": [
+            {"key": "file", "label": "dprk.yaml", "path": "data/sanctions/country_program/dprk.yaml", "accept": ".yaml,.yml"},
+        ],
+        "params_schema": {},
+        "depends_on": ["HTS"],
+        "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-510",
+    },
+    {
+        "source": "SYRIA",
+        "label": "US sanctions on Syria (31 CFR Part 542)",
+        "kind": "sanctions",
+        "auto_download": False,
+        "files": [
+            {"key": "file", "label": "syria.yaml", "path": "data/sanctions/country_program/syria.yaml", "accept": ".yaml,.yml"},
+        ],
+        "params_schema": {},
+        "depends_on": ["HTS"],
+        "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-542",
+    },
+    {
+        "source": "CUBA",
+        "label": "US sanctions on Cuba (31 CFR Part 515)",
+        "kind": "sanctions",
+        "auto_download": False,
+        "files": [
+            {"key": "file", "label": "cuba.yaml", "path": "data/sanctions/country_program/cuba.yaml", "accept": ".yaml,.yml"},
+        ],
+        "params_schema": {},
+        "depends_on": ["HTS"],
+        "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-515",
+    },
+    {
+        "source": "VENEZUELA",
+        "label": "US sanctions on Venezuela (31 CFR Parts 591 & 592)",
+        "kind": "sanctions",
+        "auto_download": False,
+        "files": [
+            {"key": "file", "label": "venezuela.yaml", "path": "data/sanctions/country_program/venezuela.yaml", "accept": ".yaml,.yml"},
+        ],
+        "params_schema": {},
+        "depends_on": ["HTS"],
+        "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-591",
+    },
+    {
         "source": "UN_CONSOLIDATED",
         "label": "UN Consolidated Sanctions List",
         "kind": "sanctions",
@@ -179,7 +282,7 @@ class ResetIn(BaseModel):
 
 
 @router.get("/refdata/sources")
-async def list_sources(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     hs_total = (await db.execute(select(func.count()).select_from(HsCode))).scalar_one()
     train_by_source_rows = (
         await db.execute(
@@ -284,7 +387,7 @@ async def run_source(source: str, body: RunIn | None = None) -> dict[str, Any]:
 
 
 @router.post("/refdata/run-all")
-async def run_all(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def run_all(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     """Enqueue every source that's ready to run, respecting depends_on ordering.
 
     Ordering is enforced lazily — the worker will run them serially in the order
@@ -328,6 +431,7 @@ DATA_TABLES = [
     "eval_job",
     "training_run",
     "eval_run",
+    "sanctioned_commodity_alias",
     "country_rule",
     "sanctioned_commodity",
     "hs_entity_index",
@@ -338,7 +442,7 @@ DATA_TABLES = [
 
 
 @router.post("/refdata/reset")
-async def reset_data(body: ResetIn, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def reset_data(body: ResetIn, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     """Drop ingested data; leave source files on disk and (by default) leave
     operator-authored rules alone."""
     truncated: list[str] = []

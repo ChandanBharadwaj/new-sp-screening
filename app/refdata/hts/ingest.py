@@ -108,7 +108,7 @@ def _roll_up(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
                     existing["title"] = desc[:512] or existing["title"]
 
     # Attach chapter notes to every row in that chapter.
-    for code, row in by_code.items():
+    for row in by_code.values():
         notes = chapter_notes.get(row["chapter"])
         if notes:
             row["chapter_notes"] = "\n\n".join(notes)

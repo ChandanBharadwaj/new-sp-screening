@@ -22,6 +22,7 @@ from app.api import (
 )
 from app.config import settings
 from app.models.registry import load_models
+from app.pipeline import versions
 from app.telemetry import configure_logging, log
 
 
@@ -30,7 +31,10 @@ async def lifespan(app: FastAPI):
     configure_logging()
     log.info("app.starting", engine_version=settings.engine_version)
     app.state.models = load_models()
-    log.info("app.ready")
+    # Cache the static version snapshot (engine + model hashes) once at startup so
+    # every screening can stamp it without re-hashing the LTR file per request.
+    app.state.versions_static = versions.compute_static()
+    log.info("app.ready", versions=app.state.versions_static)
     yield
     log.info("app.shutting_down")
 

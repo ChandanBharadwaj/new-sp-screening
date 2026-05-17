@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -25,9 +25,9 @@ def _serialize(c: HsCode) -> dict[str, Any]:
 
 @router.get("/search")
 async def search_hs(
+    db: Annotated[AsyncSession, Depends(db_session)],
     q: str = Query(..., min_length=1),
     limit: int = Query(20, le=100),
-    db: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
     stmt = (
         select(HsCode)
@@ -40,7 +40,7 @@ async def search_hs(
 
 
 @router.get("/tree")
-async def tree_root(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def tree_root(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(select(HsCode).where(HsCode.level == 2).order_by(HsCode.code))
     ).scalars().all()
@@ -48,7 +48,7 @@ async def tree_root(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
 
 
 @router.get("/{code}")
-async def get_hs(code: str, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def get_hs(code: str, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     row = (await db.execute(select(HsCode).where(HsCode.code == code))).scalar_one_or_none()
     if not row:
         raise HTTPException(404, "hs code not found")

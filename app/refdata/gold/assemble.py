@@ -62,7 +62,7 @@ async def main_async(
 
         # Sample up to per_chapter from each chapter; cap at target overall.
         sampled: list[dict] = []
-        for chap, items in by_chapter.items():
+        for items in by_chapter.values():
             rng.shuffle(items)
             sampled.extend(items[:per_chapter])
         rng.shuffle(sampled)
@@ -77,7 +77,7 @@ async def main_async(
         train: list[dict] = []
         dev: list[dict] = []
         test: list[dict] = []
-        for chap, items in chapter_buckets.items():
+        for items in chapter_buckets.values():
             rng.shuffle(items)
             n = len(items)
             n_train = int(n * train_frac)

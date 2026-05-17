@@ -18,11 +18,11 @@ class ShipmentIn(BaseModel):
 class HsCandidate(BaseModel):
     hs_code: str
     level: str
-    chapter: str
+    chapter: str | None = None
     heading: str | None = None
     title: str
     score: float
-    score_components: dict[str, Any]
+    score_components: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConfidenceMetrics(BaseModel):
@@ -37,6 +37,13 @@ class HsClassification(BaseModel):
     top_candidates: list[HsCandidate]
     chapter_distribution: dict[str, float]
     confidence_metrics: ConfidenceMetrics
+    # Abstention surface (spec-compliant; not a disposition).
+    abstained: bool = False
+    abstain_reason: str | None = None
+    fallback_level: int | None = None
+    fallback_candidate: HsCandidate | None = None
+    # Multi-commodity decomposition output (one HsCandidate per detected commodity).
+    multi_commodity: list[HsCandidate] | None = None
 
 
 class ScreeningResultOut(BaseModel):
@@ -47,3 +54,5 @@ class ScreeningResultOut(BaseModel):
     rule_matches: list[dict[str, Any]] = Field(default_factory=list)
     extracted_entities: dict[str, Any]
     latency_ms: dict[str, int]
+    # Model + refdata version snapshot for the screening.
+    versions: dict[str, Any] | None = None

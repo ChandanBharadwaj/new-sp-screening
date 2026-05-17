@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.embedder import Embedder
 from app.models.reranker import Reranker
+from app.pipeline.normalize_party import is_short_name, normalize_party
 
 STRUCTURED_QUERY = text(
     """
@@ -75,6 +76,25 @@ SPARSE_QUERY = text(
     """
 )
 
+# Trigram-fuzzy alias match. Joins sanctioned_commodity_alias (populated mainly by
+# OFAC_SDN's alt.csv) via the GIN trgm index, then back to the parent
+# sanctioned_commodity. The `similarity(...) >= :min_sim` predicate is what makes the
+# `gin_trgm_ops` index applicable; pg's planner will use it before the join.
+ALIAS_QUERY = text(
+    """
+    SELECT sc.id, sc.source, sc.source_record_id, sc.description, sc.hs_codes,
+           sc.restriction_type, sc.provenance_url,
+           MAX(similarity(a.alias, :q)) AS sim
+    FROM sanctioned_commodity_alias a
+    JOIN sanctioned_commodity sc ON sc.id = a.sanctioned_commodity_id
+    WHERE a.alias %% :q
+      AND similarity(a.alias, :q) >= :min_sim
+    GROUP BY sc.id
+    ORDER BY sim DESC
+    LIMIT :k
+    """
+)
+
 
 def _vec_literal(vec) -> str:
     return "[" + ",".join(f"{float(x):.6f}" for x in vec) + "]"
@@ -119,13 +139,29 @@ async def score(
         {"q": query_text, "origin": origin_iso, "destination": destination_iso, "k": top_k},
     )
 
-    if structured_task is not None:
-        structured_res, dense_res, sparse_res = await asyncio.gather(
-            structured_task, dense_task, sparse_task
+    # Alias trigram path: normalize the query, then suppress for short / generic strings
+    # ("Smith") that would firehose false positives.
+    party_query = normalize_party(query_text)
+    alias_task = None
+    if party_query and not is_short_name(party_query):
+        alias_task = db.execute(
+            ALIAS_QUERY,
+            {"q": party_query, "min_sim": 0.45, "k": top_k},
         )
-    else:
-        dense_res, sparse_res = await asyncio.gather(dense_task, sparse_task)
-        structured_res = None
+
+    awaitables = [t for t in (structured_task, dense_task, sparse_task, alias_task) if t is not None]
+    results = await asyncio.gather(*awaitables)
+    # Map results back in declared order.
+    idx = 0
+    structured_res = None
+    if structured_task is not None:
+        structured_res = results[idx]
+        idx += 1
+    dense_res = results[idx]
+    idx += 1
+    sparse_res = results[idx]
+    idx += 1
+    alias_res = results[idx] if alias_task is not None else None
 
     by_id: dict[int, dict] = {}
 
@@ -143,6 +179,7 @@ async def score(
                 "structured_match": True,
                 "dense": 0.0,
                 "sparse": 0.0,
+                "alias_sim": 0.0,
             }
 
     dense_max = 0.0
@@ -166,6 +203,7 @@ async def score(
                 "structured_match": False,
                 "dense": sim,
                 "sparse": 0.0,
+                "alias_sim": 0.0,
             }
 
     sparse_max = 0.0
@@ -189,7 +227,31 @@ async def score(
                 "structured_match": False,
                 "dense": 0.0,
                 "sparse": rank,
+                "alias_sim": 0.0,
             }
+
+    if alias_res is not None:
+        for r in alias_res.mappings():
+            sim = float(r["sim"])
+            rid = int(r["id"])
+            existing = by_id.get(rid)
+            if existing:
+                existing["alias_sim"] = max(existing["alias_sim"], sim)
+            else:
+                by_id[rid] = {
+                    "id": rid,
+                    "source": r["source"],
+                    "source_record_id": r["source_record_id"],
+                    "description": r["description"],
+                    "hs_codes": list(r["hs_codes"] or []),
+                    "restriction_type": r["restriction_type"],
+                    "provenance_url": r["provenance_url"],
+                    "country_pair_applicable": True,
+                    "structured_match": False,
+                    "dense": 0.0,
+                    "sparse": 0.0,
+                    "alias_sim": sim,
+                }
 
     if not by_id:
         return []
@@ -198,7 +260,9 @@ async def score(
     def pre_score(c: dict) -> float:
         norm_sparse = (c["sparse"] / sparse_max) if sparse_max > 0 else 0.0
         bonus = 0.3 if c["structured_match"] else 0.0
-        return max(c["dense"], norm_sparse) + bonus
+        # Alias trigram contributes alongside dense/sparse; capped at 1.0.
+        signal = max(c["dense"], norm_sparse, c["alias_sim"])
+        return signal + bonus
 
     ordered = sorted(by_id.values(), key=pre_score, reverse=True)
     head = ordered[:rerank_top]
@@ -214,7 +278,8 @@ async def score(
     for c in ordered:
         hs_overlap = sorted(set(c["hs_codes"]) & set(candidate_hs_codes))
         norm_sparse = (c["sparse"] / sparse_max) if sparse_max > 0 else 0.0
-        similarity = max(c["dense"], c["cross_encoder"])
+        alias_sim = c["alias_sim"]
+        similarity = max(c["dense"], c["cross_encoder"], alias_sim)
         out.append(
             {
                 "source": c["source"],
@@ -229,6 +294,7 @@ async def score(
                     "dense": round(c["dense"], 4),
                     "sparse": round(norm_sparse, 4),
                     "cross_encoder": round(c["cross_encoder"], 4),
+                    "alias_trigram": round(alias_sim, 4),
                     "structured_match": c["structured_match"],
                 },
             }

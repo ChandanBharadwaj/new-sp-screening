@@ -3,10 +3,13 @@ import { ref } from "vue";
 import { api } from "../api/client";
 import { useFetch, invalidateQueries } from "../api/useFetch";
 
+type PhraseGroup = { mode: "any_of" | "all_of"; phrases: string[] };
+
 type Rule = {
   id: number;
   name: string;
   phrase: string;
+  phrase_group: PhraseGroup | null;
   threshold: number;
   conditions: Record<string, unknown> | null;
   origin_iso: string | null;
@@ -23,6 +26,8 @@ type TestResp = {
   delta_above_threshold: number;
 };
 
+type ComposeKind = "single" | "any_of" | "all_of";
+
 type Draft = {
   name: string;
   phrase: string;
@@ -31,6 +36,8 @@ type Draft = {
   destination_iso: string;
   active: boolean;
   conditions_json: string;
+  compose_kind: ComposeKind;
+  extra_phrases: string[];
 };
 
 const EMPTY: Draft = {
@@ -41,6 +48,8 @@ const EMPTY: Draft = {
   destination_iso: "",
   active: true,
   conditions_json: "",
+  compose_kind: "single",
+  extra_phrases: [],
 };
 
 const draft = ref<Draft>({ ...EMPTY });
@@ -56,15 +65,31 @@ const rules = useFetch<{ items: Rule[] }>({
 });
 
 function buildBody() {
+  const phrase_group: PhraseGroup | null =
+    draft.value.compose_kind === "single"
+      ? null
+      : {
+          mode: draft.value.compose_kind,
+          phrases: [draft.value.phrase, ...draft.value.extra_phrases].filter((p) => p && p.trim()),
+        };
   return {
     name: draft.value.name,
     phrase: draft.value.phrase,
+    phrase_group,
     threshold: Number(draft.value.threshold),
     conditions: draft.value.conditions_json ? JSON.parse(draft.value.conditions_json) : null,
     origin_iso: draft.value.origin_iso || null,
     destination_iso: draft.value.destination_iso || null,
     active: draft.value.active,
   };
+}
+
+function addExtraPhrase() {
+  draft.value.extra_phrases = [...draft.value.extra_phrases, ""];
+}
+
+function removeExtraPhrase(i: number) {
+  draft.value.extra_phrases = draft.value.extra_phrases.filter((_, idx) => idx !== i);
 }
 
 async function save() {
@@ -97,6 +122,10 @@ async function testDraft() {
 
 function beginEdit(r: Rule) {
   editId.value = r.id;
+  const groupPhrases = r.phrase_group?.phrases ?? [];
+  // First phrase in the group lives in `phrase` (also used as embed seed); the rest
+  // go into extra_phrases. If group is null we're in single mode.
+  const extra = groupPhrases.length > 0 ? groupPhrases.slice(1) : [];
   draft.value = {
     name: r.name,
     phrase: r.phrase,
@@ -105,6 +134,8 @@ function beginEdit(r: Rule) {
     destination_iso: r.destination_iso ?? "",
     active: r.active,
     conditions_json: r.conditions ? JSON.stringify(r.conditions) : "",
+    compose_kind: r.phrase_group?.mode ?? "single",
+    extra_phrases: extra,
   };
 }
 </script>
@@ -143,8 +174,48 @@ function beginEdit(r: Rule) {
       <div class="grid gap-2 text-sm">
         <label class="text-xs text-slate-500">Name</label>
         <input v-model="draft.name" class="border rounded px-2 py-1" />
-        <label class="text-xs text-slate-500">Phrase</label>
+
+        <label class="text-xs text-slate-500">Composition</label>
+        <div class="flex gap-3 text-xs">
+          <label class="flex items-center gap-1">
+            <input type="radio" value="single" v-model="draft.compose_kind" /> single phrase
+          </label>
+          <label class="flex items-center gap-1">
+            <input type="radio" value="any_of" v-model="draft.compose_kind" /> any of (max)
+          </label>
+          <label class="flex items-center gap-1">
+            <input type="radio" value="all_of" v-model="draft.compose_kind" /> all of (min)
+          </label>
+        </div>
+
+        <label class="text-xs text-slate-500">
+          {{ draft.compose_kind === "single" ? "Phrase" : "Primary phrase" }}
+        </label>
         <textarea v-model="draft.phrase" class="border rounded px-2 py-1" rows="3" />
+
+        <template v-if="draft.compose_kind !== 'single'">
+          <label class="text-xs text-slate-500">
+            Additional phrases ({{ draft.compose_kind === "any_of" ? "any can fire" : "all must fire" }})
+          </label>
+          <div v-for="(_, i) in draft.extra_phrases" :key="i" class="flex gap-2">
+            <input
+              v-model="draft.extra_phrases[i]"
+              class="border rounded px-2 py-1 flex-1"
+              placeholder="another phrase"
+            />
+            <button
+              type="button"
+              class="text-xs text-red-700 hover:underline"
+              @click="removeExtraPhrase(i)"
+            >remove</button>
+          </div>
+          <button
+            type="button"
+            class="text-xs text-blue-700 hover:underline w-fit"
+            @click="addExtraPhrase"
+          >+ add phrase</button>
+        </template>
+
         <label class="text-xs text-slate-500">Threshold (0.0 – 1.0)</label>
         <input
           v-model.number="draft.threshold"

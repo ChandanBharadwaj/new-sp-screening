@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { useFetch } from "../api/useFetch";
 import Card from "../components/Card.vue";
 import Dot from "../components/Dot.vue";
+import StalenessBadge from "../components/StalenessBadge.vue";
 import RefdataRunButton from "../components/status/RefdataRunButton.vue";
 import ThresholdsEditor from "../components/status/ThresholdsEditor.vue";
 
@@ -24,9 +25,11 @@ type ModelInfo = {
   fallback?: boolean;
 };
 
+type Severity = "green" | "amber" | "red" | "gray";
+
 type RefdataSource = {
   source: string;
-  command: string;
+  command?: string;
   last_run: {
     started_at?: string;
     finished_at?: string;
@@ -35,6 +38,14 @@ type RefdataSource = {
     error_message?: string;
   };
   row_count: number;
+  staleness_days?: number | null;
+  staleness_severity?: Severity;
+};
+
+type SanctionsStatus = {
+  sources: RefdataSource[];
+  worst_staleness_severity: Severity;
+  totals: { sanctioned_commodity: number; country_rule: number };
 };
 
 type EvalRunRow = {
@@ -78,6 +89,11 @@ const refdata = useFetch<{
   key: ["status", "refdata"],
   refetchInterval: 10000,
   fetcher: () => api.get("/api/v1/status/refdata"),
+});
+const sanctions = useFetch<SanctionsStatus>({
+  key: ["status", "sanctions"],
+  refetchInterval: 10000,
+  fetcher: () => api.get("/api/v1/status/sanctions"),
 });
 const evalRuns = useFetch<{
   runs: EvalRunRow[];
@@ -171,12 +187,67 @@ const evalRunsTop = computed(() => (evalRuns.data.value?.runs ?? []).slice(0, 10
               </td>
               <td class="text-slate-600">
                 {{ s.last_run.finished_at ? new Date(s.last_run.finished_at).toLocaleString() : "—" }}
+                <StalenessBadge
+                  v-if="s.staleness_severity"
+                  class="ml-2"
+                  :days="s.staleness_days ?? null"
+                  :severity="s.staleness_severity"
+                />
               </td>
               <td class="font-mono">
                 {{ s.row_count }}<template v-if="s.last_run.status === 'running' && s.last_run.rows_upserted">
                   ({{ s.last_run.rows_upserted }}…)</template>
               </td>
               <td><RefdataRunButton :source="s.source" /></td>
+            </tr>
+          </tbody>
+        </table>
+      </template>
+    </Card>
+
+    <Card title="Sanctions sources">
+      <p v-if="sanctions.isLoading.value || !sanctions.data.value" class="text-slate-500">Loading…</p>
+      <template v-else>
+        <div
+          v-if="sanctions.data.value.worst_staleness_severity === 'red'"
+          class="mb-3 p-3 rounded bg-red-50 border border-red-200 text-sm text-red-800"
+        >
+          <strong>Stale sanctions data.</strong>
+          One or more sanctions sources have not been refreshed in over 30 days.
+          Screenings are still running, but their sanction matches may miss recent designations.
+          <RouterLink class="underline" to="/admin">Refresh now →</RouterLink>
+        </div>
+        <div
+          v-else-if="sanctions.data.value.worst_staleness_severity === 'amber'"
+          class="mb-3 p-3 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800"
+        >
+          One or more sanctions sources are 7–30 days old.
+          <RouterLink class="underline" to="/admin">Refresh →</RouterLink>
+        </div>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs uppercase text-slate-500">
+              <th class="py-2">Source</th><th>Status</th><th>Last refreshed</th><th>Rows</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in sanctions.data.value.sources" :key="s.source" class="border-t">
+              <td class="py-2 font-medium">{{ s.source }}</td>
+              <td>
+                <span :class="['px-2 py-0.5 rounded text-xs', refdataStatusClass(s.last_run.status)]">
+                  {{ s.last_run.status }}
+                </span>
+              </td>
+              <td class="text-slate-600">
+                {{ s.last_run.finished_at ? new Date(s.last_run.finished_at).toLocaleString() : "—" }}
+                <StalenessBadge
+                  v-if="s.staleness_severity"
+                  class="ml-2"
+                  :days="s.staleness_days ?? null"
+                  :severity="s.staleness_severity"
+                />
+              </td>
+              <td class="font-mono">{{ s.row_count }}</td>
             </tr>
           </tbody>
         </table>

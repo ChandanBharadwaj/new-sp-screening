@@ -4,6 +4,7 @@ import { RouterLink, useRoute } from "vue-router";
 import { api } from "../api/client";
 import { useFetch, invalidateQueries } from "../api/useFetch";
 import Bar from "../components/Bar.vue";
+import EntityHighlight from "../components/EntityHighlight.vue";
 
 type Candidate = {
   hs_code: string;
@@ -53,7 +54,10 @@ type Detail = {
   };
   sanction_matches: SanctionMatch[];
   rule_matches: RuleMatch[];
-  extracted_entities: Record<string, string[] | null>;
+  // Either the legacy `dict[label, list[str]]` shape or the structured
+  // `dict[label, list[{text, start, end, score}]]` shape. EntityHighlight
+  // tolerates both — strings render as plain text without overlay.
+  extracted_entities: Record<string, Array<string | { text: string; start: number; end: number; score: number }>>;
   latency_ms: Record<string, number>;
 };
 
@@ -135,9 +139,12 @@ function saveNote() {
 
     <section class="bg-white border rounded-lg p-4 shadow-sm">
       <h3 class="text-sm uppercase text-slate-500 mb-2">Shipment</h3>
-      <p><strong>Commodity:</strong> {{ q.data.value.shipment.commodity_text }}</p>
-      <p v-if="q.data.value.shipment.cargo_text"><strong>Cargo:</strong> {{ q.data.value.shipment.cargo_text }}</p>
-      <p class="text-sm text-slate-600 mt-1">
+      <div class="mb-1"><strong>Commodity:</strong></div>
+      <EntityHighlight
+        :text="q.data.value.shipment.commodity_text + (q.data.value.shipment.cargo_text ? ' ' + q.data.value.shipment.cargo_text : '')"
+        :entities="q.data.value.extracted_entities"
+      />
+      <p class="text-sm text-slate-600 mt-2">
         Route: <span class="font-mono">{{ q.data.value.shipment.origin_iso ?? "??" }} → {{ q.data.value.shipment.destination_iso ?? "??" }}</span>
       </p>
     </section>

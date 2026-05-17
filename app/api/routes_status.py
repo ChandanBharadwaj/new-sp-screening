@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from datetime import UTC, datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
@@ -29,23 +30,59 @@ _started_at = time.time()
 
 REFDATA_SOURCES = [
     {"source": "HTS", "table": "hs_code"},
+    {"source": "WCO", "table": "hs_code"},
     {"source": "ScheduleB", "table": "hs_training_example"},
     {"source": "CROSS", "table": "hs_training_example"},
     {"source": "HsEntityIndex", "table": "hs_entity_index"},
     {"source": "GoldAssembly", "table": "eval/gold/splits"},
 ]
 
+# kind = "sanctions" sources are subject to the strict 7/30-day staleness gates;
+# kind = "taxonomy" gets the lax 90/365-day gates (HS rarely changes).
 SANCTIONS_SOURCES = [
+    {"source": "OFAC_SDN"},
+    {"source": "ITAR_USML"},
     {"source": "EU_DUAL_USE"},
     {"source": "EU_RUSSIA"},
     {"source": "BIS_CCL"},
     {"source": "UN_CONSOLIDATED"},
     {"source": "EU_CONSOLIDATED"},
+    {"source": "IRAN"},
+    {"source": "DPRK"},
+    {"source": "SYRIA"},
+    {"source": "CUBA"},
+    {"source": "VENEZUELA"},
 ]
 
 
+def _staleness_days(finished_at) -> int | None:
+    if finished_at is None:
+        return None
+    now = datetime.now(UTC)
+    fa = finished_at if finished_at.tzinfo else finished_at.replace(tzinfo=UTC)
+    return max(0, int((now - fa).total_seconds() // 86400))
+
+
+def _staleness_severity(days: int | None, *, sanctions: bool) -> str:
+    """Map age-in-days to a severity tier ('green'|'amber'|'red'|'gray')."""
+    if days is None:
+        return "gray"
+    if sanctions:
+        if days <= 7:
+            return "green"
+        if days <= 30:
+            return "amber"
+        return "red"
+    # Taxonomy / reference data ages slower.
+    if days <= 90:
+        return "green"
+    if days <= 365:
+        return "amber"
+    return "red"
+
+
 @router.get("/system")
-async def system_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def system_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     pg_ok = False
     try:
         await db.execute(text("SELECT 1"))
@@ -78,7 +115,7 @@ async def models_status() -> dict[str, Any]:
 
 
 @router.get("/refdata")
-async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def refdata_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     hs_total = (await db.execute(select(func.count()).select_from(HsCode))).scalar_one()
     hs_by_level_rows = (
         await db.execute(select(HsCode.level, func.count()).group_by(HsCode.level))
@@ -113,6 +150,7 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
             row_count = last_run.rows_upserted if last_run else 0
         else:
             row_count = train_by_source.get(s["source"], 0)
+        days = _staleness_days(last_run.finished_at) if last_run else None
         sources.append(
             {
                 "source": s["source"],
@@ -126,6 +164,8 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
                 if last_run
                 else {"status": "never_run"},
                 "row_count": int(row_count),
+                "staleness_days": days,
+                "staleness_severity": _staleness_severity(days, sanctions=False),
             }
         )
 
@@ -142,7 +182,7 @@ async def refdata_status(db: AsyncSession = Depends(db_session)) -> dict[str, An
 
 
 @router.get("/sanctions")
-async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def sanctions_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     sanc_total = (await db.execute(select(func.count()).select_from(SanctionedCommodity))).scalar_one()
     rules_total = (await db.execute(select(func.count()).select_from(CountryRule))).scalar_one()
     by_source = dict(
@@ -163,6 +203,7 @@ async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, 
                 .limit(1)
             )
         ).scalar_one_or_none()
+        days = _staleness_days(last_run.finished_at) if last_run else None
         sources.append(
             {
                 "source": s["source"],
@@ -178,11 +219,23 @@ async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, 
                     if last_run
                     else {"status": "never_run"}
                 ),
+                "staleness_days": days,
+                "staleness_severity": _staleness_severity(days, sanctions=True),
             }
         )
 
+    # Surface the worst sanctions-source severity so the UI can render a
+    # top-of-page banner without recomputing the policy.
+    severity_order = {"green": 0, "amber": 1, "gray": 2, "red": 3}
+    worst = max(
+        (s["staleness_severity"] for s in sources),
+        key=lambda sev: severity_order.get(sev, 0),
+        default="gray",
+    )
+
     return {
         "sources": sources,
+        "worst_staleness_severity": worst,
         "totals": {
             "sanctioned_commodity": int(sanc_total),
             "country_rule": int(rules_total),
@@ -191,7 +244,7 @@ async def sanctions_status(db: AsyncSession = Depends(db_session)) -> dict[str, 
 
 
 @router.get("/rules")
-async def rules_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def rules_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     total = (await db.execute(select(func.count()).select_from(ScreeningRule))).scalar_one()
     active = (
         await db.execute(
@@ -202,7 +255,7 @@ async def rules_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]
 
 
 @router.get("/eval")
-async def eval_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def eval_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(select(EvalRun).order_by(EvalRun.ran_at.desc()).limit(20))
     ).scalars().all()
@@ -237,7 +290,7 @@ async def eval_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
 
 
 @router.get("/batches")
-async def batches_status(db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def batches_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(select(BatchJob).order_by(BatchJob.created_at.desc()).limit(10))
     ).scalars().all()

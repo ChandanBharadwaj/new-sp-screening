@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,7 +22,7 @@ class FeedbackIn(BaseModel):
 
 
 @router.post("")
-async def create_feedback(body: FeedbackIn, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def create_feedback(body: FeedbackIn, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     res = (
         await db.execute(select(ScreeningResult).where(ScreeningResult.id == body.result_id))
     ).scalar_one_or_none()
@@ -43,7 +43,7 @@ async def create_feedback(body: FeedbackIn, db: AsyncSession = Depends(db_sessio
 
 
 @router.get("/{result_id}")
-async def list_for_result(result_id: UUID, db: AsyncSession = Depends(db_session)) -> dict[str, Any]:
+async def list_for_result(result_id: UUID, db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
     rows = (
         await db.execute(
             select(FeedbackEvent)
