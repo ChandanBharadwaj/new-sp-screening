@@ -138,7 +138,7 @@ async def _upsert(items: list[dict]) -> int:
                     hs_code=it["hs_code"],
                     embedding=v.tolist(),
                 )
-                stmt = stmt.on_conflict_do_nothing()
+                stmt = stmt.on_conflict_do_nothing(constraint="uq_hs_training_example")
                 await db.execute(stmt)
                 n += 1
             run.rows_upserted = n

@@ -20,16 +20,18 @@ def _candidate_text(c: dict) -> str:
 
 
 def _retrieval_score(c: dict) -> float:
-    # When RRF is active, prefer the fused rank score for pre-rerank ordering —
-    # it captures cross-source agreement that any single signal misses.
-    rrf = float(c.get("rrf_score", 0.0))
-    legacy = max(
+    # In RRF mode we want the cross-encoder to see the RRF top-K — RRF scores
+    # live in a different (much smaller) numerical range than dense cosine, so
+    # we can't blend them with max(); we pick one. In max mode we fall back to
+    # the legacy per-source max-blend.
+    if settings.fusion_mode == "rrf":
+        return float(c.get("rrf_score", 0.0))
+    return max(
         c.get("dense_similarity", 0.0),
         c.get("dense_via_training", 0.0),
         c.get("sparse_score", 0.0),
         c.get("entity_overlap_score", 0.0),
     )
-    return max(rrf, legacy)
 
 
 def rerank(reranker: Reranker, query: str, candidates: list[dict]) -> list[dict]:
