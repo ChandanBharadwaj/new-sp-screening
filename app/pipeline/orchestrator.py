@@ -70,7 +70,11 @@ async def run_screen(
     raw_text = commodity_text + (" " + cargo_text if cargo_text else "")
     norm = normalize.normalize(raw_text)
 
+    # NER output is structured `{label: [{text, start, end, score}]}` for UI
+    # highlighting; downstream retrieval/decomposition only needs the surface
+    # forms, so we flatten right after the call.
     entities = await asyncio.to_thread(ner.extract, models.ner, norm)
+    entities_flat = ner.flatten_to_text(entities)
     timer.mark("ner")
 
     # Stage 2 — primary HS ranking (single-commodity path).
@@ -80,14 +84,14 @@ async def run_screen(
         norm_text=norm,
         origin_iso=origin_iso,
         destination_iso=destination_iso,
-        entities=entities,
+        entities=entities_flat,
     )
     timer.mark("retrieval_rerank_fusion")
 
     # Stage 2b — multi-commodity decomposition. If the decomposer is confident the
     # text describes ≥2 distinct commodities, re-run HS ranking per sub-text and
     # surface a list of top-1 HS candidates. Single-commodity case is unaffected.
-    decomp = decompose.split_into_commodities(norm, entities)
+    decomp = decompose.split_into_commodities(norm, entities_flat)
     multi_top1: list[dict] | None = None
     if decomp.confidence >= _DECOMPOSE_CONF_GATE and len(decomp.fragments) >= 2:
         sub_results = []
@@ -100,7 +104,7 @@ async def run_screen(
                 norm_text=frag.text,
                 origin_iso=origin_iso,
                 destination_iso=destination_iso,
-                entities=sub_entities,
+                entities=ner.flatten_to_text(sub_entities),
             )
             if sub_cands:
                 sub_results.append(sub_cands[0])

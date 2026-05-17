@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { RouterLink } from "vue-router";
 import { api } from "../api/client";
 import Bar from "../components/Bar.vue";
+import EntityHighlight from "../components/EntityHighlight.vue";
 
 type Candidate = {
   hs_code: string;
@@ -43,7 +44,7 @@ type ScreenResponse = {
   };
   sanction_matches: SanctionMatch[];
   rule_matches: RuleMatch[];
-  extracted_entities: Record<string, unknown>;
+  extracted_entities: Record<string, Array<string | { text: string; start: number; end: number; score: number }>>;
   latency_ms: Record<string, number>;
 };
 
@@ -147,6 +148,14 @@ function uppercase(target: "origin" | "destination", value: string) {
     </section>
 
     <template v-if="result">
+      <section class="bg-white border rounded-lg p-4 shadow-sm">
+        <h3 class="text-sm uppercase text-slate-500 mb-2">Input (with extracted entities)</h3>
+        <EntityHighlight
+          :text="commodity + (cargo ? ' ' + cargo : '')"
+          :entities="result.extracted_entities"
+        />
+      </section>
+
       <section class="bg-white border rounded-lg p-4 shadow-sm">
         <h3 class="text-sm uppercase text-slate-500 mb-2">HS Classification (top candidates)</h3>
         <table class="w-full text-sm">
