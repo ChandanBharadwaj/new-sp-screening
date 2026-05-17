@@ -1,13 +1,28 @@
-"""Country-program YAML ingester tests (no DB)."""
+"""Country-program YAML ingester tests (no DB).
+
+The DB-backed `_expand_prefixes` helper is tested with mocked sessions so we
+don't need a live Postgres for these tests.
+"""
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.refdata.sanctions.country_program.ingest import (
     VALID_DIRECTIONS,
     _country_rules,
+    _expand_prefixes,
     parse,
 )
+
+
+def _mock_db_returning(codes: list[str]) -> AsyncMock:
+    """Build an AsyncMock session whose `.execute(...).scalars().all()` returns codes."""
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = codes
+    db.execute = AsyncMock(return_value=result)
+    return db
 
 
 class TestCountryRules:
@@ -78,7 +93,11 @@ restrictions:
         assert r["hs_codes"] == ["270900"]
         assert r["country_rules"][0]["origin_iso"] == "ZZ"
 
-    def test_padding_short_hs_code(self, tmp_path: Path) -> None:
+    def test_prefix_kept_unpadded(self, tmp_path: Path) -> None:
+        """Short HS prefixes are stored as-is; expansion to 6-digit codes happens
+        in `_expand_prefixes` against the live `hs_code` table at ingest time, not
+        in `parse()`. Padding with zeros at parse time would create invalid HS codes
+        (chapter 72 has no heading 7200) that never match real shipments."""
         p = tmp_path / "tiny.yaml"
         p.write_text(
             """
@@ -92,8 +111,24 @@ restrictions:
             encoding="utf-8",
         )
         _, _, rows = parse(p)
-        # "72" → padded right with zeros to "720000".
-        assert rows[0]["hs_codes"] == ["720000"]
+        assert rows[0]["hs_codes"] == ["72"]
+
+    def test_rejects_odd_length_codes(self, tmp_path: Path) -> None:
+        """3-digit and 5-digit codes are typos; HS prefixes are valid only at
+        chapter (2), heading (4), or subheading (6) depth."""
+        p = tmp_path / "bad.yaml"
+        p.write_text(
+            """
+source: T
+country_iso: ZZ
+restrictions:
+  - description: "Bogus 5-digit"
+    hs_codes: ["72083"]
+""",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="2-, 4-, or 6-digit"):
+            parse(p)
 
     def test_missing_source_raises(self, tmp_path: Path) -> None:
         p = tmp_path / "bad.yaml"
@@ -124,6 +159,38 @@ restrictions:
         _, _, rows = parse(p)
         assert len(rows) == 1
         assert rows[0]["description"] == "Valid one"
+
+
+class TestExpandPrefixes:
+    async def test_six_digit_passthrough(self) -> None:
+        db = _mock_db_returning([])  # query never used
+        out = await _expand_prefixes(db, ["271019"])
+        assert out == ["271019"]
+        # No DB call should fire for an already-6-digit code.
+        db.execute.assert_not_called()
+
+    async def test_prefix_expansion(self) -> None:
+        db = _mock_db_returning(["271011", "271012", "271019"])
+        out = await _expand_prefixes(db, ["2710"])
+        assert out == ["271011", "271012", "271019"]
+        db.execute.assert_called_once()
+
+    async def test_missing_prefix_dropped_with_warning(self) -> None:
+        db = _mock_db_returning([])  # HS taxonomy returns nothing for this prefix
+        out = await _expand_prefixes(db, ["99"])
+        assert out == []  # silently drop rather than persist a non-matching code
+
+    async def test_mixed_input_dedups_and_sorts(self) -> None:
+        # Same code arriving via both a literal 6-digit and a 4-digit prefix expansion.
+        result_codes = ["271011", "271019"]
+        db = _mock_db_returning(result_codes)
+        out = await _expand_prefixes(db, ["271011", "2710"])
+        assert out == ["271011", "271019"]
+
+    async def test_empty(self) -> None:
+        db = _mock_db_returning([])
+        assert await _expand_prefixes(db, []) == []
+        db.execute.assert_not_called()
 
 
 class TestSeededCountryFiles:

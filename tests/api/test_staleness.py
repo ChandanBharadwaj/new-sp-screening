@@ -1,5 +1,5 @@
 """Tests for the staleness helpers exposed via routes_status (pure functions)."""
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.api.routes_status import _staleness_days, _staleness_severity
 
@@ -9,11 +9,11 @@ class TestStalenessDays:
         assert _staleness_days(None) is None
 
     def test_zero_for_recent(self) -> None:
-        recent = datetime.now(timezone.utc) - timedelta(hours=2)
+        recent = datetime.now(UTC) - timedelta(hours=2)
         assert _staleness_days(recent) == 0
 
     def test_days_match(self) -> None:
-        old = datetime.now(timezone.utc) - timedelta(days=10, hours=1)
+        old = datetime.now(UTC) - timedelta(days=10, hours=1)
         assert _staleness_days(old) == 10
 
     def test_naive_datetime_treated_as_utc(self) -> None:

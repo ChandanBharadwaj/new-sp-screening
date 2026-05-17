@@ -73,3 +73,29 @@ class TestFallbackCandidate:
     def test_no_fallback_when_none(self) -> None:
         assert fallback_candidate([], 2) is None
         assert fallback_candidate([{"hs_code": "720839"}], None) is None
+
+    def test_clamps_to_actual_prefix_length(self) -> None:
+        """If the top candidate code is already shorter than the requested fallback
+        level (e.g. a 4-digit heading + fallback_level=6), the returned candidate
+        is labeled at its actual depth — not mislabeled as a deeper level."""
+        cands = [{"hs_code": "7208", "title": "Steel", "score": 0.5, "score_components": {}}]
+        fb = fallback_candidate(cands, 6)
+        assert fb is not None
+        assert fb["hs_code"] == "7208"
+        # Label clamped from "subheading" to "heading" because the code is 4 digits.
+        assert fb["level"] == "heading"
+
+    def test_returns_none_for_odd_length_code(self) -> None:
+        # 3-digit codes never appear in HS but defensive code shouldn't emit a
+        # fractional prefix mislabeled as a known level.
+        cands = [{"hs_code": "720", "title": "x", "score": 0.5, "score_components": {}}]
+        assert fallback_candidate(cands, 2) == {
+            "hs_code": "72",
+            "level": "chapter",
+            "chapter": "72",
+            "heading": None,
+            "title": "x",
+            "score": 0.5,
+            "score_components": {},
+            "derived_from_top1": "720",
+        }

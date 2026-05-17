@@ -109,6 +109,10 @@ async def run_screen(
         timer.mark("multi_commodity")
 
     # Stage 5 — sanctions + rules in parallel, off the top HS candidates.
+    # If `candidates` is empty (HS retrieval found nothing) `top_hs_codes` is empty
+    # too; sanctions.score then silently skips the structured-overlap path and falls
+    # back to dense+sparse+alias matching, which is intentional. Documented here
+    # because it's easy to miss when refactoring.
     top_hs_codes = [c.get("hs_code") for c in candidates[:20] if c.get("hs_code")]
     shipment_ctx = {
         "shipment_value": shipment_value,

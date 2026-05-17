@@ -179,6 +179,7 @@ async def score(
                 "structured_match": True,
                 "dense": 0.0,
                 "sparse": 0.0,
+                "alias_sim": 0.0,
             }
 
     dense_max = 0.0
@@ -202,6 +203,7 @@ async def score(
                 "structured_match": False,
                 "dense": sim,
                 "sparse": 0.0,
+                "alias_sim": 0.0,
             }
 
     sparse_max = 0.0
@@ -234,7 +236,7 @@ async def score(
             rid = int(r["id"])
             existing = by_id.get(rid)
             if existing:
-                existing["alias_sim"] = max(existing.get("alias_sim", 0.0), sim)
+                existing["alias_sim"] = max(existing["alias_sim"], sim)
             else:
                 by_id[rid] = {
                     "id": rid,
@@ -251,10 +253,6 @@ async def score(
                     "alias_sim": sim,
                 }
 
-    # Backfill alias_sim default on rows that came in via the other paths.
-    for c in by_id.values():
-        c.setdefault("alias_sim", 0.0)
-
     if not by_id:
         return []
 
@@ -263,7 +261,7 @@ async def score(
         norm_sparse = (c["sparse"] / sparse_max) if sparse_max > 0 else 0.0
         bonus = 0.3 if c["structured_match"] else 0.0
         # Alias trigram contributes alongside dense/sparse; capped at 1.0.
-        signal = max(c["dense"], norm_sparse, c.get("alias_sim", 0.0))
+        signal = max(c["dense"], norm_sparse, c["alias_sim"])
         return signal + bonus
 
     ordered = sorted(by_id.values(), key=pre_score, reverse=True)
@@ -280,7 +278,7 @@ async def score(
     for c in ordered:
         hs_overlap = sorted(set(c["hs_codes"]) & set(candidate_hs_codes))
         norm_sparse = (c["sparse"] / sparse_max) if sparse_max > 0 else 0.0
-        alias_sim = c.get("alias_sim", 0.0)
+        alias_sim = c["alias_sim"]
         similarity = max(c["dense"], c["cross_encoder"], alias_sim)
         out.append(
             {

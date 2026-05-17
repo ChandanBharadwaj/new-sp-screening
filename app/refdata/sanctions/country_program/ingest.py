@@ -6,16 +6,18 @@ import prohibitions, licensed exports. The structure is small enough per-country
 that operators maintain it as a YAML file; this module ingests one file at a time
 and registers as one source per country (IRAN, DPRK, SYRIA, CUBA, VENEZUELA).
 
-YAML schema (see fixtures/iran.example.yaml for a worked example):
+YAML schema (see data/sanctions/country_program/iran.yaml for a worked example):
 
     source: IRAN                              # SOURCES key; also used in DB.source
     country_iso: IR
     provenance_url: https://...
     restrictions:
       - description: "Iranian-origin petroleum & petroleum products"
-        hs_codes: ["2710"]                    # prefixes ok; will be 6-digit-padded
-        restriction_type: blocked
-        direction: import_from                # block if origin = country_iso
+        hs_codes: ["2710"]                    # chapter (2-digit) or heading (4-digit)
+                                              # prefixes are expanded against the loaded
+                                              # HS taxonomy to all 6-digit subheadings
+                                              # at ingest time (requires HTS to be loaded
+                                              # first; SOURCES declares depends_on=["HTS"]).
       - description: "Aircraft & parts exported to Iran"
         hs_codes: ["8802", "8803"]
         restriction_type: licensed
@@ -26,22 +28,20 @@ YAML schema (see fixtures/iran.example.yaml for a worked example):
         direction: both
 
 direction: one of `import_from` | `export_to` | `both` (default `export_to`).
-
-USAGE:
-    python -m app.refdata.sanctions.country_program.ingest \\
-        --file ./data/sanctions/iran.yaml
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 from pathlib import Path
-from typing import Any
 
 import yaml
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import HsCode
 from app.refdata.common import with_run_logging
-from app.refdata.sanctions.common import normalize_codes, upsert_sanctioned_commodities
+from app.refdata.sanctions.common import upsert_sanctioned_commodities
 from app.telemetry import configure_logging, log
 
 VALID_DIRECTIONS = ("import_from", "export_to", "both")
@@ -64,8 +64,19 @@ def _country_rules(country_iso: str, direction: str, restriction: str) -> list[d
     ]
 
 
+def _clean_code(raw: object) -> str | None:
+    """Strip non-digit decoration; return the digits-only form, or None if empty."""
+    s = "".join(ch for ch in str(raw) if ch.isdigit())
+    return s or None
+
+
 def parse(file: Path) -> tuple[str, str, list[dict]]:
-    """Parse a country-program YAML. Returns (source_key, country_iso, rows)."""
+    """Parse a country-program YAML. Returns (source_key, country_iso, rows).
+
+    HS code prefixes are kept as-is (e.g. "2710" stays "2710"). Expansion to 6-digit
+    subheadings happens in `_expand_prefixes` against the live `hs_code` table — kept
+    out of `parse()` so this function stays pure and testable without a DB.
+    """
     with file.open("r", encoding="utf-8") as fh:
         doc = yaml.safe_load(fh) or {}
 
@@ -90,25 +101,24 @@ def parse(file: Path) -> tuple[str, str, list[dict]]:
         codes_raw = r.get("hs_codes") or []
         if not isinstance(codes_raw, list):
             raise ValueError(f"{file}[{idx}]: hs_codes must be a list")
-        # Pad short codes to 6 digits by chapter/heading semantics — `normalize_codes`
-        # in sanctions.common already enforces 6-digit minimum, so we left-trim any
-        # decoration and accept prefixes by padding with zeros for storage.
-        codes = []
+        codes: list[str] = []
         for c in codes_raw:
-            s = "".join(ch for ch in str(c) if ch.isdigit())
-            if not s:
+            cleaned = _clean_code(c)
+            if cleaned is None:
                 continue
-            if len(s) < 6:
-                s = s + "0" * (6 - len(s))
-            codes.append(s)
-        codes = normalize_codes(codes)
+            # Validate length: 2, 4, or 6 digits only. Anything else is a typo.
+            if len(cleaned) not in (2, 4, 6):
+                raise ValueError(
+                    f"{file}[{idx}]: hs_code {c!r} must be a 2-, 4-, or 6-digit code"
+                )
+            codes.append(cleaned)
         direction = (r.get("direction") or "export_to").strip().lower()
         restriction = (r.get("restriction_type") or "blocked").strip().lower()
         rows.append(
             {
                 "source_record_id": f"{source_key}-{idx}",
                 "description": desc[:2000],
-                "hs_codes": codes,
+                "hs_codes": codes,  # prefixes kept here; expansion happens later
                 "restriction_type": restriction,
                 "provenance_url": provenance or None,
                 "country_rules": _country_rules(country_iso, direction, restriction),
@@ -116,6 +126,42 @@ def parse(file: Path) -> tuple[str, str, list[dict]]:
         )
 
     return source_key, country_iso, rows
+
+
+async def _expand_prefixes(db: AsyncSession, codes: list[str]) -> list[str]:
+    """Expand HS prefixes to the full set of matching 6-digit subheadings.
+
+    A 6-digit code is returned as-is. A 2- or 4-digit code is expanded by querying
+    `hs_code` for all 6-digit rows whose `code` starts with the prefix. Missing
+    prefixes (e.g. HS taxonomy not yet loaded) are dropped with a warning — they'd
+    otherwise persist as non-matching strings in `sanctioned_commodity.hs_codes`
+    and silently fail the `&&` overlap join at screening time.
+    """
+    if not codes:
+        return []
+    out: set[str] = set()
+    for c in codes:
+        if len(c) == 6:
+            out.add(c)
+            continue
+        rows = (
+            await db.execute(
+                select(HsCode.code).where(
+                    HsCode.code.like(f"{c}%"),
+                    HsCode.level == 6,
+                )
+            )
+        ).scalars().all()
+        if not rows:
+            log.warning("country_program.unexpanded_prefix", prefix=c)
+            continue
+        out.update(rows)
+    return sorted(out)
+
+
+async def _expand_rows_in_place(db: AsyncSession, rows: list[dict]) -> None:
+    for r in rows:
+        r["hs_codes"] = await _expand_prefixes(db, r["hs_codes"])
 
 
 async def main_async(file: Path) -> None:
@@ -127,23 +173,19 @@ async def main_async(file: Path) -> None:
         source=source_key,
         country=country_iso,
         n=len(rows),
-        with_hs=sum(1 for r in rows if r["hs_codes"]),
     )
     async with with_run_logging(source_key, notes=f"file={file} country={country_iso}") as (db, run):
+        # Expand prefixes inside the run so the warning logs are tied to this RefdataRun.
+        await _expand_rows_in_place(db, rows)
+        log.info(
+            "country_program.expanded",
+            source=source_key,
+            with_hs=sum(1 for r in rows if r["hs_codes"]),
+            total_codes=sum(len(r["hs_codes"]) for r in rows),
+        )
         counts = await upsert_sanctioned_commodities(db, rows, source=source_key, run=run)
         run.rows_upserted = counts["sanctioned"]
         run.notes = (run.notes or "") + f" | rules={counts['rules']}"
-
-
-# Convenience entrypoints — one per SOURCES catalog entry. They all delegate to
-# `main_async` with the right file path. The worker dispatcher routes to these.
-def _default_file(country_slug: str) -> Path:
-    return Path(f"data/sanctions/country_program/{country_slug}.yaml")
-
-
-async def run_with_default(country_slug: str, file: Path | None = None) -> None:
-    """Used by the worker dispatcher when the operator hasn't overridden the path."""
-    await main_async(file or _default_file(country_slug))
 
 
 def main() -> None:
@@ -151,18 +193,6 @@ def main() -> None:
     p.add_argument("--file", type=Path, required=True)
     args = p.parse_args()
     asyncio.run(main_async(args.file))
-
-
-def _entrypoint_factory(country_slug: str) -> Any:
-    """Returns a (sync) main() pinned to a specific country's default file path."""
-
-    def _main() -> None:
-        p = argparse.ArgumentParser()
-        p.add_argument("--file", type=Path, default=_default_file(country_slug))
-        args = p.parse_args()
-        asyncio.run(main_async(args.file))
-
-    return _main
 
 
 if __name__ == "__main__":

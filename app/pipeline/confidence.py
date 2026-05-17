@@ -97,11 +97,18 @@ def compute_abstention(
     return {"abstained": False, "reason": None, "fallback_level": None}
 
 
+_LEVEL_LABEL = {2: "chapter", 4: "heading", 6: "subheading"}
+
+
 def fallback_candidate(candidates: list[dict], fallback_level: int | None) -> dict | None:
     """Walk the top candidate's HS code to the requested aggregation level.
 
     Pure code-prefix; assumes 2/4/6-digit HS codes. Returns a candidate-shaped dict
     that callers (assemble.build) can drop into `hs_classification.fallback_candidate`.
+
+    If the top candidate's code is already shorter than the requested fallback level
+    (e.g. a 4-digit heading + fallback_level=6), the prefix and the label are clamped
+    to the actual prefix length rather than mislabeling a heading as a subheading.
     """
     if not candidates or not fallback_level or fallback_level not in (2, 4, 6):
         return None
@@ -109,13 +116,15 @@ def fallback_candidate(candidates: list[dict], fallback_level: int | None) -> di
     code = (top.get("hs_code") or "")
     if not code:
         return None
-    prefix = code[:fallback_level]
-    if not prefix:
+    # Clamp to the prefix actually available on the top candidate.
+    actual_level = min(fallback_level, len(code))
+    if actual_level not in _LEVEL_LABEL:
+        # Code length isn't one of 2/4/6 — bail rather than emit a fractional prefix.
         return None
-    label = {2: "chapter", 4: "heading", 6: "subheading"}[fallback_level]
+    prefix = code[:actual_level]
     return {
         "hs_code": prefix,
-        "level": label,
+        "level": _LEVEL_LABEL[actual_level],
         "chapter": code[:2] if code else None,
         "heading": code[:4] if len(code) >= 4 else None,
         "title": top.get("title") or "",

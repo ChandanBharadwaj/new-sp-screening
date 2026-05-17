@@ -177,7 +177,7 @@ SOURCES: list[dict[str, Any]] = [
             {"key": "file", "label": "iran.yaml", "path": "data/sanctions/country_program/iran.yaml", "accept": ".yaml,.yml"},
         ],
         "params_schema": {},
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-560",
     },
     {
@@ -189,7 +189,7 @@ SOURCES: list[dict[str, Any]] = [
             {"key": "file", "label": "dprk.yaml", "path": "data/sanctions/country_program/dprk.yaml", "accept": ".yaml,.yml"},
         ],
         "params_schema": {},
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-510",
     },
     {
@@ -201,7 +201,7 @@ SOURCES: list[dict[str, Any]] = [
             {"key": "file", "label": "syria.yaml", "path": "data/sanctions/country_program/syria.yaml", "accept": ".yaml,.yml"},
         ],
         "params_schema": {},
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-542",
     },
     {
@@ -213,7 +213,7 @@ SOURCES: list[dict[str, Any]] = [
             {"key": "file", "label": "cuba.yaml", "path": "data/sanctions/country_program/cuba.yaml", "accept": ".yaml,.yml"},
         ],
         "params_schema": {},
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-515",
     },
     {
@@ -225,7 +225,7 @@ SOURCES: list[dict[str, Any]] = [
             {"key": "file", "label": "venezuela.yaml", "path": "data/sanctions/country_program/venezuela.yaml", "accept": ".yaml,.yml"},
         ],
         "params_schema": {},
-        "depends_on": [],
+        "depends_on": ["HTS"],
         "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-591",
     },
     {
