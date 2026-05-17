@@ -63,6 +63,9 @@ flowchart LR
 | [`evaluation.md`](evaluation.md) | Runners, metrics, CI gate, thresholds |
 | [`inference.md`](inference.md) | Stage-by-stage walkthrough of `run_screen` |
 | [`data-flow-example.md`](data-flow-example.md) | End-to-end trace of one semiconductor shipment |
+| [`api-reference.md`](api-reference.md) | Every HTTP endpoint, request/response shapes, streaming |
+| [`feedback-loop.md`](feedback-loop.md) | How operator corrections feed back into thresholds, rules, training |
+| [`extending.md`](extending.md) | Cookbook: new sanctions source, new LTR feature, new endpoint, new stage |
 | [`sanctions-sources.md`](sanctions-sources.md) | Per-source provenance and operator workflow (pre-existing) |
 
 ## Runtime processes
