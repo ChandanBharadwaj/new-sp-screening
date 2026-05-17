@@ -23,6 +23,7 @@ from app.refdata.sanctions.itar import ingest as itar_ingest
 from app.refdata.sanctions.ofac_sdn import ingest as ofac_ingest
 from app.refdata.sanctions.un import ingest as un_ingest
 from app.refdata.schedule_b import ingest as sb_ingest
+from app.refdata.wco import ingest as wco_ingest
 from app.telemetry import log
 
 
@@ -38,6 +39,10 @@ async def run_refdata(ctx: dict, source: str, params: dict[str, Any]) -> dict:
     try:
         if source == "HTS":
             await hts_ingest.main_async(year=params.get("year"), file=_pathy(params.get("file")))
+        elif source == "WCO":
+            await wco_ingest.main_async(
+                _pathy(params.get("file")) or Path("data/taxonomy/wco_hs_2022.xlsx")
+            )
         elif source == "ScheduleB":
             csv_path = _pathy(params.get("file")) or Path("data/schedule_b/schedule_b.csv")
             await sb_ingest.main_async(csv_path)

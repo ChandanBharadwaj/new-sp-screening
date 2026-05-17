@@ -79,6 +79,23 @@ SOURCES: list[dict[str, Any]] = [
         "publisher_url": "https://rulings.cbp.gov/",
     },
     {
+        "source": "WCO",
+        "label": "WCO International HS Nomenclature",
+        "kind": "taxonomy",
+        "auto_download": False,
+        "files": [
+            {
+                "key": "file",
+                "label": "WCO HS XLSX",
+                "path": "data/taxonomy/wco_hs_2022.xlsx",
+                "accept": ".xlsx,.xls",
+            }
+        ],
+        "params_schema": {},
+        "depends_on": [],
+        "publisher_url": "https://www.wcoomd.org/en/topics/nomenclature/instrument-and-tools/hs-nomenclature-2022-edition.aspx",
+    },
+    {
         "source": "HsEntityIndex",
         "label": "GLiNER entity index over HS codes",
         "kind": "derived",

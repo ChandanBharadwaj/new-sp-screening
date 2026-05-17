@@ -30,6 +30,7 @@ _started_at = time.time()
 
 REFDATA_SOURCES = [
     {"source": "HTS", "table": "hs_code"},
+    {"source": "WCO", "table": "hs_code"},
     {"source": "ScheduleB", "table": "hs_training_example"},
     {"source": "CROSS", "table": "hs_training_example"},
     {"source": "HsEntityIndex", "table": "hs_entity_index"},
