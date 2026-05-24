@@ -4,6 +4,11 @@ from uuid import UUID
 
 from app.config import settings
 
+# Materialized rules carry `created_by = "sanctions_source:<src>"`. Keyword-list
+# rules additionally use the `KW:<list_name>` source convention; this prefix
+# detects them inside the `created_by` value the rules-scoring stage echoes back.
+_KEYWORD_LIST_CREATED_BY_PREFIX = "sanctions_source:KW:"
+
 
 def _level_label(level: int | None, code: str) -> str:
     if level == 2:
@@ -15,6 +20,50 @@ def _level_label(level: int | None, code: str) -> str:
     if code:
         return {2: "chapter", 4: "heading", 6: "subheading"}.get(len(code), "subheading")
     return "subheading"
+
+
+def group_rule_matches_by_list(rule_matches: list[dict]) -> list[dict]:
+    """Group fired rule matches by keyword-list name for the result drill-down.
+
+    A keyword-list rule has `created_by = "sanctions_source:KW:<list_name>"`. For
+    each distinct list we surface the top-scoring phrase, the number of phrases
+    that crossed their per-rule threshold, and the count of all rules from that
+    list that fired (whether above or below threshold). Operator-authored rules
+    and sanction-derived rules from OFAC/EU/etc. are ignored here — they have
+    their own surface in `rule_matches`.
+
+    Output is sorted by top_similarity desc.
+    """
+    by_list: dict[str, dict] = {}
+    for m in rule_matches:
+        created_by = m.get("created_by") or ""
+        if not isinstance(created_by, str) or not created_by.startswith(
+            _KEYWORD_LIST_CREATED_BY_PREFIX
+        ):
+            continue
+        list_name = created_by[len(_KEYWORD_LIST_CREATED_BY_PREFIX):]
+        sim = float(m.get("phrase_similarity", 0.0))
+        thr = float(m.get("threshold", 0.0))
+        above = bool(m.get("conditions_satisfied", True)) and sim >= thr
+        bucket = by_list.setdefault(
+            list_name,
+            {
+                "list": list_name,
+                "top_phrase": m.get("phrase"),
+                "top_similarity": sim,
+                "n_above_threshold": 0,
+                "n_total": 0,
+            },
+        )
+        bucket["n_total"] += 1
+        if above:
+            bucket["n_above_threshold"] += 1
+        if sim > bucket["top_similarity"]:
+            bucket["top_similarity"] = sim
+            bucket["top_phrase"] = m.get("phrase")
+    out = list(by_list.values())
+    out.sort(key=lambda r: r["top_similarity"], reverse=True)
+    return out
 
 
 def _candidate_view(c: dict) -> dict:

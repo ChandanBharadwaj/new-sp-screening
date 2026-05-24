@@ -16,4 +16,13 @@ fi
 echo "[entrypoint] running liquibase update against ${LIQUIBASE_COMMAND_URL}"
 liquibase --defaults-file=/app/liquibase.properties update
 
+# First-boot data seed: download publisher data for sources with stable URLs
+# (HTS, UN consolidated, OFAC SDN). Manual-fetch sources are reported but not
+# blocked. Set BOOTSTRAP_ON_START=false to skip (useful in dev when files are
+# already volume-mounted).
+if [ "${BOOTSTRAP_ON_START:-true}" = "true" ] && [ -f /app/scripts/bootstrap_data.py ]; then
+    echo "[entrypoint] bootstrapping publisher data (best-effort)…"
+    python /app/scripts/bootstrap_data.py --best-effort || true
+fi
+
 exec "$@"

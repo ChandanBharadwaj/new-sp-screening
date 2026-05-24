@@ -22,6 +22,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY app ./app
 COPY eval ./eval
 COPY db ./db
+COPY scripts ./scripts
 COPY liquibase.properties ./
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

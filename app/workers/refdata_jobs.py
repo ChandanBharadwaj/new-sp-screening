@@ -15,6 +15,7 @@ from app.refdata.cross import scraper as cross_scraper
 from app.refdata.gold import assemble as gold_assemble
 from app.refdata.hs_entities import build as hs_entities
 from app.refdata.hts import ingest as hts_ingest
+from app.refdata.keyword_lists import ingest as keyword_list_ingest
 from app.refdata.sanctions import materialize_rules
 from app.refdata.sanctions.bis_ccl import ingest as bis_ingest
 from app.refdata.sanctions.country_program import ingest as country_ingest
@@ -27,6 +28,8 @@ from app.refdata.sanctions.un import ingest as un_ingest
 from app.refdata.schedule_b import ingest as sb_ingest
 from app.refdata.wco import ingest as wco_ingest
 from app.telemetry import log
+
+KEYWORD_LIST_PREFIX = keyword_list_ingest.SOURCE_PREFIX  # "KW:"
 
 # Keys that route through a sanctions ingester and produce sanctioned_commodity
 # rows. After ingest we re-materialize ScreeningRule rows from these (gated by
@@ -126,13 +129,21 @@ async def run_refdata(ctx: dict, source: str, params: dict[str, Any]) -> dict:
             await eu_cons.main_async(
                 _pathy(params.get("file")) or Path("data/sanctions/eu_consolidated.xml")
             )
+        elif source.startswith(KEYWORD_LIST_PREFIX):
+            # Operator-authored keyword list. The portion after the prefix is the
+            # manifest's `name`; the ingester re-loads scope/threshold from the DB.
+            list_name = source[len(KEYWORD_LIST_PREFIX):]
+            await keyword_list_ingest.main_async(list_name=list_name)
         else:
             return {"status": "unknown_source", "source": source}
         # Materialize ScreeningRule rows for sanctions sources whose
         # sanctions_rule_config.enabled is true. This is a cheap no-op for
         # disabled sources (one indexed SELECT on sanctions_rule_config).
+        # Keyword-list sources auto-enable materialization at ingest time, so
+        # they fall through this path the same way as OFAC/EU/etc.
         materialized: dict | None = None
-        if source in SANCTIONS_SOURCES:
+        is_keyword_list = source.startswith(KEYWORD_LIST_PREFIX)
+        if source in SANCTIONS_SOURCES or is_keyword_list:
             try:
                 async with SessionLocal() as db:
                     materialized = await materialize_rules.maybe_materialize_after_ingest(

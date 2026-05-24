@@ -173,6 +173,7 @@ async def run_screen(
     )
     payload["sanction_matches"] = sanction_matches
     payload["rule_matches"] = rule_matches
+    payload["rule_matches_by_list"] = assemble.group_rule_matches_by_list(rule_matches)
     timer.mark("assemble")
     payload["latency_ms"] = timer.snapshot()
 

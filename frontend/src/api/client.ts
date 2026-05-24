@@ -22,4 +22,5 @@ export const api = {
     }),
   postForm: <T,>(p: string, form: FormData) =>
     request<T>(p, { method: "POST", body: form }),
+  del: <T,>(p: string) => request<T>(p, { method: "DELETE" }),
 };

@@ -11,6 +11,7 @@ disk and leaves operator-authored `screening_rule` rows alone unless
 """
 from __future__ import annotations
 
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +20,7 @@ from typing import Annotated, Any
 from arq.connections import RedisSettings, create_pool
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session
@@ -27,11 +28,13 @@ from app.config import settings
 from app.db.models import (
     HsCode,
     HsTrainingExample,
+    KeywordList,
     RefdataRun,
     SanctionedCommodity,
     SanctionsRuleConfig,
     ScreeningRule,
 )
+from app.refdata.keyword_lists import ingest as keyword_list_ingest
 from app.refdata.sanctions import materialize_rules
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -301,8 +304,38 @@ async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict
     ).all()
     sanc_by_source = {s: int(n) for s, n in sanc_by_source_rows}
 
+    # Materialize the static SOURCES catalog plus a virtual row per active
+    # keyword-list manifest so operators see all data sources in one Admin table.
+    keyword_lists = (
+        await db.execute(select(KeywordList).order_by(KeywordList.name))
+    ).scalars().all()
+    virtual_sources: list[dict[str, Any]] = []
+    for kl in keyword_lists:
+        virtual_sources.append(
+            {
+                "source": keyword_list_ingest.source_key(kl.name),
+                "label": kl.label or f"Keyword list — {kl.name}",
+                "kind": "sanctions",
+                "auto_download": False,
+                "files": [
+                    {
+                        "key": "csv",
+                        "label": "Keywords CSV",
+                        "path": kl.source_file
+                        or str(KEYWORD_LIST_DATA_ROOT / f"{kl.name}.csv"),
+                        "accept": ".csv",
+                    }
+                ],
+                "params_schema": {},
+                "depends_on": [],
+                "publisher_url": None,
+                "_keyword_list_name": kl.name,  # marker stripped before emit
+            }
+        )
+    all_sources = list(SOURCES) + virtual_sources
+
     out: list[dict[str, Any]] = []
-    for s in SOURCES:
+    for s in all_sources:
         last_run = (
             await db.execute(
                 select(RefdataRun)
@@ -341,7 +374,11 @@ async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict
         required_present = all(fs["present"] for fs in files_status if not fs["optional"])
         out.append(
             {
-                **{k: v for k, v in s.items() if k != "files"},
+                **{
+                    k: v
+                    for k, v in s.items()
+                    if k not in ("files", "_keyword_list_name")
+                },
                 "files": files_status,
                 "row_count": int(row_count),
                 "ready_to_run": s["auto_download"] or required_present,
@@ -620,3 +657,264 @@ async def run_rule_materialization(
         raise HTTPException(404, f"unknown sanctions source: {source}")
     counts = await materialize_rules.materialize_for_source(db, source)
     return {"source": source, **counts}
+
+
+# ---------------------------------------------------------------------------
+# Keyword lists — operator-authored CSV files that ride on the same
+# `sanctioned_commodity` + `country_rule` + `screening_rule` machinery as
+# OFAC/EU/BIS/ITAR/UN/country-program. See app/refdata/keyword_lists/ingest.py.
+# ---------------------------------------------------------------------------
+
+VALID_KEYWORD_DIRECTIONS = ("import_from", "export_to", "both")
+KEYWORD_LIST_DATA_ROOT = DATA_ROOT / "keyword_lists"
+# Per the schema, `keyword_list.name` is `text` but it's used inside
+# `sanctioned_commodity.source` (String(32)) with the `KW:` prefix. Keep names
+# short enough that `KW:<name>` fits.
+MAX_KEYWORD_LIST_NAME_LEN = 32 - len(keyword_list_ingest.SOURCE_PREFIX)
+# Lowercase letters, digits, underscore, hyphen — no path separators, no spaces.
+_NAME_RE = re.compile(r"^[a-z0-9_-]+$")
+
+
+def _validate_list_name(name: str) -> None:
+    if not name:
+        raise HTTPException(400, "keyword list name is required")
+    if len(name) > MAX_KEYWORD_LIST_NAME_LEN:
+        raise HTTPException(
+            400,
+            f"keyword list name must be at most {MAX_KEYWORD_LIST_NAME_LEN} characters "
+            f"(stored inside source key 'KW:<name>' which is capped at 32 chars)",
+        )
+    if not _NAME_RE.match(name):
+        raise HTTPException(
+            400,
+            "keyword list name may only contain lowercase letters, digits, '_' and '-'",
+        )
+
+
+class KeywordListConfigIn(BaseModel):
+    label: str | None = None
+    origin_iso: str | None = None
+    destination_iso: str | None = None
+    direction: str | None = None
+    restriction_type: str | None = None
+    default_threshold: float | None = None
+    active: bool | None = None
+
+
+def _serialize_manifest(row: KeywordList, *, active_rules: int, sanctioned: int) -> dict[str, Any]:
+    return {
+        "name": row.name,
+        "label": row.label,
+        "origin_iso": row.origin_iso,
+        "destination_iso": row.destination_iso,
+        "direction": row.direction,
+        "restriction_type": row.restriction_type,
+        "default_threshold": float(row.default_threshold),
+        "active": bool(row.active),
+        "source_file": row.source_file,
+        "row_count": int(row.row_count),
+        "last_ingested_at": row.last_ingested_at.isoformat() if row.last_ingested_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "source_key": keyword_list_ingest.source_key(row.name),
+        "file_present": bool(row.source_file and Path(row.source_file).exists()),
+        "active_rules": int(active_rules),
+        "sanctioned_commodities": int(sanctioned),
+    }
+
+
+async def _counts_for_lists(db: AsyncSession, names: list[str]) -> tuple[dict[str, int], dict[str, int]]:
+    """Return (sanctioned_by_list, active_rules_by_list) keyed on bare list name."""
+    if not names:
+        return {}, {}
+    sources = [keyword_list_ingest.source_key(n) for n in names]
+    created_bys = [f"sanctions_source:{s}" for s in sources]
+
+    sanc_rows = (
+        await db.execute(
+            select(SanctionedCommodity.source, func.count())
+            .where(SanctionedCommodity.source.in_(sources))
+            .group_by(SanctionedCommodity.source)
+        )
+    ).all()
+    sanc_by_name = {
+        s.removeprefix(keyword_list_ingest.SOURCE_PREFIX): int(n) for s, n in sanc_rows
+    }
+
+    rule_rows = (
+        await db.execute(
+            select(ScreeningRule.created_by, func.count())
+            .where(ScreeningRule.created_by.in_(created_bys))
+            .where(ScreeningRule.active.is_(True))
+            .group_by(ScreeningRule.created_by)
+        )
+    ).all()
+    rules_by_name: dict[str, int] = {}
+    for created_by, n in rule_rows:
+        # created_by is "sanctions_source:KW:<name>" — strip both prefixes.
+        if isinstance(created_by, str) and created_by.startswith("sanctions_source:"):
+            src = created_by[len("sanctions_source:"):]
+            if src.startswith(keyword_list_ingest.SOURCE_PREFIX):
+                rules_by_name[src[len(keyword_list_ingest.SOURCE_PREFIX):]] = int(n)
+    return sanc_by_name, rules_by_name
+
+
+@router.get("/keyword-lists")
+async def list_keyword_lists(
+    db: Annotated[AsyncSession, Depends(db_session)],
+) -> dict[str, Any]:
+    rows = (
+        await db.execute(select(KeywordList).order_by(KeywordList.name))
+    ).scalars().all()
+    sanc_by_name, rules_by_name = await _counts_for_lists(db, [r.name for r in rows])
+    return {
+        "items": [
+            _serialize_manifest(
+                r,
+                active_rules=rules_by_name.get(r.name, 0),
+                sanctioned=sanc_by_name.get(r.name, 0),
+            )
+            for r in rows
+        ]
+    }
+
+
+@router.put("/keyword-lists/{name}")
+async def upsert_keyword_list(
+    name: str,
+    body: KeywordListConfigIn,
+    db: Annotated[AsyncSession, Depends(db_session)],
+) -> dict[str, Any]:
+    _validate_list_name(name)
+    if body.default_threshold is not None and not (0.0 <= body.default_threshold <= 1.0):
+        raise HTTPException(400, "default_threshold must be in [0.0, 1.0]")
+    if body.direction is not None and body.direction not in VALID_KEYWORD_DIRECTIONS:
+        raise HTTPException(
+            400, f"direction must be one of {VALID_KEYWORD_DIRECTIONS} or null"
+        )
+    if body.origin_iso is not None and len(body.origin_iso) not in (0, 2):
+        raise HTTPException(400, "origin_iso must be a 2-letter ISO code or null")
+    if body.destination_iso is not None and len(body.destination_iso) not in (0, 2):
+        raise HTTPException(400, "destination_iso must be a 2-letter ISO code or null")
+
+    existing = (
+        await db.execute(select(KeywordList).where(KeywordList.name == name))
+    ).scalar_one_or_none()
+    if existing is None:
+        row = KeywordList(
+            name=name,
+            label=body.label,
+            origin_iso=(body.origin_iso or None) or None,
+            destination_iso=(body.destination_iso or None) or None,
+            direction=body.direction,
+            restriction_type=(body.restriction_type or "watchlist"),
+            default_threshold=(
+                float(body.default_threshold) if body.default_threshold is not None else 0.55
+            ),
+            active=bool(body.active) if body.active is not None else True,
+        )
+        db.add(row)
+    else:
+        if body.label is not None:
+            existing.label = body.label
+        if body.origin_iso is not None:
+            existing.origin_iso = body.origin_iso or None
+        if body.destination_iso is not None:
+            existing.destination_iso = body.destination_iso or None
+        if body.direction is not None:
+            existing.direction = body.direction
+        if body.restriction_type is not None:
+            existing.restriction_type = body.restriction_type
+        if body.default_threshold is not None:
+            existing.default_threshold = float(body.default_threshold)
+        if body.active is not None:
+            existing.active = bool(body.active)
+        existing.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    row = (
+        await db.execute(select(KeywordList).where(KeywordList.name == name))
+    ).scalar_one()
+    sanc, rules = await _counts_for_lists(db, [name])
+    return _serialize_manifest(
+        row, active_rules=rules.get(name, 0), sanctioned=sanc.get(name, 0)
+    )
+
+
+@router.post("/keyword-lists/{name}/upload")
+async def upload_keyword_list_csv(
+    name: str,
+    file: UploadFile,
+    db: Annotated[AsyncSession, Depends(db_session)],
+) -> dict[str, Any]:
+    _validate_list_name(name)
+    existing = (
+        await db.execute(select(KeywordList).where(KeywordList.name == name))
+    ).scalar_one_or_none()
+    if existing is None:
+        raise HTTPException(
+            404,
+            f"keyword list {name!r} not found — create it first via "
+            f"PUT /api/v1/admin/keyword-lists/{name}",
+        )
+    KEYWORD_LIST_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+    dest = KEYWORD_LIST_DATA_ROOT / f"{name}.csv"
+    with dest.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    existing.source_file = str(dest)
+    existing.updated_at = datetime.now(UTC)
+    await db.commit()
+    return {
+        "name": name,
+        "path": str(dest),
+        "size_bytes": dest.stat().st_size,
+    }
+
+
+@router.post("/keyword-lists/{name}/run")
+async def run_keyword_list(name: str) -> dict[str, Any]:
+    _validate_list_name(name)
+    pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    try:
+        source = keyword_list_ingest.source_key(name)
+        job = await pool.enqueue_job("run_refdata", source, {})
+    finally:
+        await pool.close()
+    return {"name": name, "source": source, "enqueued_job_id": job.job_id if job else None}
+
+
+@router.delete("/keyword-lists/{name}")
+async def delete_keyword_list(
+    name: str,
+    db: Annotated[AsyncSession, Depends(db_session)],
+) -> dict[str, Any]:
+    _validate_list_name(name)
+    source = keyword_list_ingest.source_key(name)
+    # Drop all sanctioned_commodity rows for this list (CASCADE clears country_rule
+    # + aliases). The materializer's orphan path then soft-deactivates the rules
+    # — call it explicitly here since no re-ingest will follow.
+    await db.execute(
+        text("DELETE FROM sanctioned_commodity WHERE source = :s"),
+        {"s": source},
+    )
+    # Disable materialization for the source.
+    cfg = (
+        await db.execute(
+            select(SanctionsRuleConfig).where(SanctionsRuleConfig.source == source)
+        )
+    ).scalar_one_or_none()
+    if cfg is not None:
+        cfg.enabled = False
+        cfg.updated_at = datetime.now(UTC)
+    # Soft-deactivate any materialized rules so they stop firing immediately.
+    await db.execute(
+        text(
+            "UPDATE screening_rule SET active = false "
+            "WHERE created_by = :cb AND active = true"
+        ),
+        {"cb": f"sanctions_source:{source}"},
+    )
+    # Delete the manifest last; CSV file on disk is intentionally kept so a
+    # later re-create can re-upload through normal upload flow.
+    await db.execute(delete(KeywordList).where(KeywordList.name == name))
+    await db.commit()
+    return {"name": name, "deleted": True}
