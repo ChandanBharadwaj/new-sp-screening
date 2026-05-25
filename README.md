@@ -113,6 +113,7 @@ These constraints are non-negotiable and shape every design decision in this doc
 - FR3.3 — Rule matching uses semantic similarity via cross-encoder scoring between cargo text and rule phrase.
 - FR3.4 — Engine emits per-rule score, threshold, and delta above/below threshold. **Does not make decisions** — reports numbers.
 - FR3.5 — Composition: support any-of / all-of groupings of phrases under a single rule.
+- FR3.6 — **Operator keyword lists.** Analysts can upload a CSV of sanctioned words/phrases under a named list (e.g. `seafood`). Each keyword lands in the shared `sanctioned_commodity` table (`source = "KW:<list>"`) and is materialized into one `screening_rule` per keyword, so it is scored by the same cross-encoder path as any other rule. Lists are scoped (global, or origin/destination per list) and managed entirely from the Admin UI. See [§9 — Operator keyword lists](#operator-keyword-lists).
 
 ### FR4 — Consolidated Quantitative Output
 
@@ -427,6 +428,29 @@ All free, public, authoritative. Each requires an ingestion job that pulls, norm
 
 Russia (post-2022 luxury/oil/dual-use HS bans), Iran, DPRK, Syria, Cuba, Venezuela. Each requires analyst curation to map narrative restrictions to HS chapters; UI must support this.
 
+<a name="operator-keyword-lists"></a>
+### Operator keyword lists
+
+Analyst-curated CSV lists of sanctioned words/phrases (e.g. a `seafood` list whose rows are individual restricted species). These are **not** a separate matching path — they ride on the same data and rule layers as the sources above:
+
+- A list is a CSV with a single `keywords` column (one word/phrase per row; `keyword`/`phrase`/`phrases` headers also accepted; a UTF-8 BOM is tolerated).
+- Each keyword is upserted as a `sanctioned_commodity` row with `source = "KW:<list_name>"` and a content-addressed `source_record_id` (so editing a keyword replaces it cleanly on re-upload rather than leaving a stale row). `hs_codes` is empty by default — keyword lists match semantically, not by HS overlap.
+- The list's scope becomes companion `country_rule` rows: **global** (no ISO), or scoped via `direction` (`import_from` / `export_to` / `both`) with an origin/destination ISO.
+- After ingest, the existing rule materializer (`app/refdata/sanctions/materialize_rules.py`) derives one `screening_rule` per keyword (`created_by = "sanctions_source:KW:<list_name>"`), embedded and scored by the cross-encoder at screen time exactly like any other rule. Materialization is auto-enabled for keyword-list sources.
+- **Management is UI-only**, via Admin → Keyword lists: create a manifest (name, label, scope, threshold), upload the CSV, Run, or delete. Re-upload is a full replacement (removed keywords are orphan-deleted and their rules deactivated). `Run all ready sources` also re-ingests active lists.
+
+| Field | Where it lives |
+|-------|----------------|
+| List metadata (name, scope, threshold, file path, row count) | `keyword_list` manifest table (migration `0007`) |
+| Keyword content | `sanctioned_commodity` (`source = "KW:<list>"`) + `country_rule` |
+| Derived semantic rule | `screening_rule` (`created_by = "sanctions_source:KW:<list>"`) |
+
+A screening result groups fired keyword-list rules under `rule_matches_by_list` (top phrase + counts per list) alongside the standard per-rule `rule_matches`.
+
+### First-boot data seed
+
+`scripts/bootstrap_data.py` runs from the container entrypoint before the app comes up and downloads the **actual publisher data** (never synthesized) for sources that expose a stable direct URL — **US HTS**, **UN Consolidated**, and **OFAC SDN** (`sdn`/`add`/`alt`) — into the on-disk paths the ingesters already read. It is idempotent (skips files newer than 7 days), atomic, and best-effort (a publisher outage never blocks startup). Sources whose publishers only ship behind navigation pages, logins, or token URLs (Schedule B, WCO, BIS CCL, EU Consolidated/Dual-Use/Russia, ITAR/USML) are **reported** with their publisher URL and destination path so an operator can drop them in once. Disable per-environment with `BOOTSTRAP_ON_START=false`.
+
 ---
 
 ## 10. Output Schema
@@ -733,6 +757,13 @@ commodity-screening/
     ├── ml-sidecar-ci.yml
     └── eval-gate.yml                  # Blocks PR on accuracy regression
 ```
+
+> **Note:** the shipped implementation is Python/FastAPI end-to-end (the orchestrator and ML models run in-process, not a separate Spring Boot service), with reference-data ingesters under `app/refdata/<source>/`. Components added since the original spec:
+>
+> - `app/refdata/keyword_lists/ingest.py` — operator keyword-list ingester (§9 — Operator keyword lists).
+> - `scripts/bootstrap_data.py` — first-boot publisher data seed (§9 — First-boot data seed).
+> - `db/changelog/changes/0007-keyword-lists.sql` — `keyword_list` manifest table.
+> - `frontend/src/components/admin/KeywordListPanel.vue` + the Admin "Keyword lists" section.
 
 ---
 
