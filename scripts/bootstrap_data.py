@@ -63,15 +63,17 @@ OFAC_BASE = "https://www.treasury.gov/ofac/downloads"
 # UN Consolidated Sanctions: the same URL the existing UN ingester uses.
 UN_XML_URL = "https://scsanctions.un.org/resources/xml/en/consolidated.xml"
 
-# US HTS export endpoint already used by `app/refdata/hts/ingest.py` when file=None.
-# Chapters 1..99 exported in one shot.
-HTS_URL = "https://hts.usitc.gov/reststop/exportList?format=JSON&from=0100&to=9999"
+# US HTS export endpoint. Must match HTS_URL_TEMPLATE in app/refdata/hts/ingest.py,
+# and the destination must match the cache path that ingester checks
+# (data/hts/htsdata_latest.json), or the seed is dead weight — the ingester would
+# just re-download.
+HTS_URL = "https://hts.usitc.gov/reststop/exportList?from=0100000000&to=9999999999&format=JSON&styles=false"
 
 JOBS: list[DownloadJob] = [
     DownloadJob(
         name="HTS",
         url=HTS_URL,
-        dest=DATA_ROOT / "taxonomy" / "hts.json",
+        dest=DATA_ROOT / "hts" / "htsdata_latest.json",
         min_size_bytes=200_000,  # full HTS JSON is multi-megabyte
     ),
     DownloadJob(

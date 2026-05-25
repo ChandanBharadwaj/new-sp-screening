@@ -70,7 +70,10 @@ def parse_csv(file: Path) -> list[str]:
     and entries shorter than MIN_KEYWORD_LEN. Preserves input order on the first
     occurrence.
     """
-    with file.open("r", encoding="utf-8", newline="") as fh:
+    # utf-8-sig strips a BOM if present — Excel-exported CSVs commonly include
+    # one, which would otherwise corrupt the first header (e.g. "﻿keywords")
+    # and defeat the column match below.
+    with file.open("r", encoding="utf-8-sig", newline="") as fh:
         reader = csv.DictReader(fh)
         if reader.fieldnames is None:
             return []

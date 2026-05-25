@@ -50,6 +50,13 @@ def test_parse_csv_empty_file_returns_empty_list(tmp_path: Path) -> None:
     assert ingest.parse_csv(p) == []
 
 
+def test_parse_csv_strips_utf8_bom(tmp_path: Path) -> None:
+    # Excel-exported CSVs carry a BOM; the header must still match.
+    p = tmp_path / "keywords.csv"
+    p.write_bytes(b"\xef\xbb\xbfkeywords\nyellowfin tuna\ncaviar\n")
+    assert ingest.parse_csv(p) == ["yellowfin tuna", "caviar"]
+
+
 def test_source_key_uses_short_prefix() -> None:
     assert ingest.source_key("seafood") == "KW:seafood"
     # Stay under the SanctionedCommodity.source String(32) cap.

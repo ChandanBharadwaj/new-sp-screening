@@ -304,38 +304,13 @@ async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict
     ).all()
     sanc_by_source = {s: int(n) for s, n in sanc_by_source_rows}
 
-    # Materialize the static SOURCES catalog plus a virtual row per active
-    # keyword-list manifest so operators see all data sources in one Admin table.
-    keyword_lists = (
-        await db.execute(select(KeywordList).order_by(KeywordList.name))
-    ).scalars().all()
-    virtual_sources: list[dict[str, Any]] = []
-    for kl in keyword_lists:
-        virtual_sources.append(
-            {
-                "source": keyword_list_ingest.source_key(kl.name),
-                "label": kl.label or f"Keyword list — {kl.name}",
-                "kind": "sanctions",
-                "auto_download": False,
-                "files": [
-                    {
-                        "key": "csv",
-                        "label": "Keywords CSV",
-                        "path": kl.source_file
-                        or str(KEYWORD_LIST_DATA_ROOT / f"{kl.name}.csv"),
-                        "accept": ".csv",
-                    }
-                ],
-                "params_schema": {},
-                "depends_on": [],
-                "publisher_url": None,
-                "_keyword_list_name": kl.name,  # marker stripped before emit
-            }
-        )
-    all_sources = list(SOURCES) + virtual_sources
-
+    # Keyword lists are intentionally NOT surfaced here. They have their own
+    # management surface (GET/PUT/upload/run/delete under /keyword-lists) with a
+    # dedicated Admin panel; mixing them into this table would expose the generic
+    # SourceCard Run/Upload buttons, which target /refdata/{source}/{run,upload}
+    # and 404 for KW:* keys. `run-all` re-ingests active keyword lists separately.
     out: list[dict[str, Any]] = []
-    for s in all_sources:
+    for s in SOURCES:
         last_run = (
             await db.execute(
                 select(RefdataRun)
@@ -374,11 +349,7 @@ async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict
         required_present = all(fs["present"] for fs in files_status if not fs["optional"])
         out.append(
             {
-                **{
-                    k: v
-                    for k, v in s.items()
-                    if k not in ("files", "_keyword_list_name")
-                },
+                **{k: v for k, v in s.items() if k != "files"},
                 "files": files_status,
                 "row_count": int(row_count),
                 "ready_to_run": s["auto_download"] or required_present,
@@ -456,6 +427,19 @@ async def run_all(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str,
                 continue
             job = await pool.enqueue_job("run_refdata", s["source"], {})
             enqueued.append({"source": s["source"], "job_id": job.job_id if job else None})
+
+        # Re-ingest active keyword lists that have a CSV on disk. They aren't in
+        # the SOURCES catalog, so they're handled separately here.
+        kw_rows = (
+            await db.execute(select(KeywordList).where(KeywordList.active.is_(True)))
+        ).scalars().all()
+        for kl in kw_rows:
+            if not kl.source_file or not Path(kl.source_file).exists():
+                skipped.append({"source": keyword_list_ingest.source_key(kl.name), "reason": "no CSV uploaded"})
+                continue
+            src = keyword_list_ingest.source_key(kl.name)
+            job = await pool.enqueue_job("run_refdata", src, {})
+            enqueued.append({"source": src, "job_id": job.job_id if job else None})
     finally:
         await pool.close()
     return {"enqueued": enqueued, "skipped": skipped}
