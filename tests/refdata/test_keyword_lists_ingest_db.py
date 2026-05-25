@@ -199,6 +199,47 @@ async def test_re_upload_removes_orphan_and_deactivates_rule(
         await _cleanup(db, list_name)
 
 
+async def test_edit_keyword_in_place_updates_content(
+    db, fake_embedder, tmp_path: Path
+) -> None:
+    """Editing a keyword (same row position) must replace the old commodity, not
+    silently keep it. Regression for the positional-id + ON CONFLICT DO NOTHING bug."""
+    list_name = "seafood_edit_test"
+    try:
+        await _cleanup(db, list_name)
+        csv_path = await _make_manifest(db, list_name, tmp_path)
+        csv_path.write_text("keywords\ntuna\ncod\nshrimp\n", encoding="utf-8")
+        await kl_ingest.main_async(list_name=list_name)
+
+        src = kl_ingest.source_key(list_name)
+        descs_v1 = {
+            r.description
+            for r in (
+                await db.execute(
+                    select(SanctionedCommodity).where(SanctionedCommodity.source == src)
+                )
+            ).scalars().all()
+        }
+        assert descs_v1 == {"tuna", "cod", "shrimp"}
+
+        # Edit row 1 in place: cod -> salmon.
+        csv_path.write_text("keywords\ntuna\nsalmon\nshrimp\n", encoding="utf-8")
+        await kl_ingest.main_async(list_name=list_name)
+
+        descs_v2 = {
+            r.description
+            for r in (
+                await db.execute(
+                    select(SanctionedCommodity).where(SanctionedCommodity.source == src)
+                )
+            ).scalars().all()
+        }
+        # "cod" gone, "salmon" present — the edit landed.
+        assert descs_v2 == {"tuna", "salmon", "shrimp"}
+    finally:
+        await _cleanup(db, list_name)
+
+
 async def test_missing_manifest_raises(db, fake_embedder) -> None:
     with pytest.raises(ValueError, match="has no manifest row"):
         await kl_ingest.main_async(list_name="does_not_exist_anywhere")

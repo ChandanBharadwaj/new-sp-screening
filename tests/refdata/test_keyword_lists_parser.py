@@ -76,7 +76,11 @@ def test_build_rows_global_scope_no_country_rule_pair() -> None:
     )
     rows = ingest.build_rows("seafood", ["caviar", "shrimp"], m)
     assert len(rows) == 2
-    assert rows[0]["source_record_id"] == "KW:seafood-0"
+    # Content-addressed id (not positional) so edits don't collide under
+    # ON CONFLICT DO NOTHING. Stable + deterministic for a given phrase.
+    assert rows[0]["source_record_id"] == ingest._record_id("KW:seafood", "caviar")
+    assert rows[0]["source_record_id"].startswith("KW:seafood-")
+    assert rows[0]["source_record_id"] != rows[1]["source_record_id"]
     assert rows[0]["description"] == "caviar"
     assert rows[0]["hs_codes"] == []  # semantic-only by default
     assert rows[0]["country_rules"] == [
@@ -86,6 +90,13 @@ def test_build_rows_global_scope_no_country_rule_pair() -> None:
             "restriction_type": "watchlist",
         }
     ]
+
+
+def test_record_id_is_stable_and_content_addressed() -> None:
+    # Same phrase → same id (idempotent re-runs); different phrase → different id
+    # (edited keyword orphan-deletes the old row instead of silently keeping it).
+    assert ingest._record_id("KW:s", "tuna") == ingest._record_id("KW:s", "tuna")
+    assert ingest._record_id("KW:s", "tuna") != ingest._record_id("KW:s", "salmon")
 
 
 def test_build_rows_export_to_scope() -> None:

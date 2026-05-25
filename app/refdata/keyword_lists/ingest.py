@@ -33,6 +33,7 @@ must never drop rows the publisher still ships.
 from __future__ import annotations
 
 import csv
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -162,19 +163,33 @@ def _country_rules_for(manifest: KeywordList) -> list[dict[str, Any]]:
     ]
 
 
+def _record_id(src: str, phrase: str) -> str:
+    """Content-addressed id for a keyword.
+
+    Deliberately NOT positional: `upsert_sanctioned_commodities` is
+    ON CONFLICT DO NOTHING, so a positional id (KW:list-0) would let an edited
+    keyword at the same row index silently keep the old description / embedding /
+    tsvector. Hashing the phrase means an edit yields a new id — the old row is
+    orphan-deleted and the new one is inserted with a fresh embedding — while an
+    unchanged keyword keeps a stable id (no churn on identical re-runs).
+    """
+    h = hashlib.sha1(phrase.encode("utf-8")).hexdigest()[:12]
+    return f"{src}-{h}"
+
+
 def build_rows(list_name: str, phrases: list[str], manifest: KeywordList) -> list[dict[str, Any]]:
     """Project (list_name, phrase) pairs into the row shape `upsert_sanctioned_commodities` consumes."""
     src = source_key(list_name)
     rules = _country_rules_for(manifest)
     return [
         {
-            "source_record_id": f"{src}-{idx}",
+            "source_record_id": _record_id(src, p),
             "description": p,
             "hs_codes": [],  # semantic-only by default
             "restriction_type": manifest.restriction_type,
             "country_rules": rules,
         }
-        for idx, p in enumerate(phrases)
+        for p in phrases
     ]
 
 
