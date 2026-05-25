@@ -3,15 +3,30 @@ import { computed, ref } from "vue";
 import { api } from "../api/client";
 import { useFetch, invalidateQueries } from "../api/useFetch";
 
-type RuleSourceFilter = "all" | "manual" | "materialized";
+type RuleSourceFilter = "all" | "manual" | "materialized" | "keyword_lists";
 
 const MATERIALIZED_PREFIX = "sanctions_source:";
+const KEYWORD_LIST_INNER_PREFIX = "KW:";
 
 function isMaterialized(r: { created_by: string | null }): boolean {
   return !!r.created_by && r.created_by.startsWith(MATERIALIZED_PREFIX);
 }
 
+function isKeywordList(r: { created_by: string | null }): boolean {
+  return (
+    isMaterialized(r) &&
+    r.created_by!.slice(MATERIALIZED_PREFIX.length).startsWith(KEYWORD_LIST_INNER_PREFIX)
+  );
+}
+
 function ruleOrigin(r: { created_by: string | null }): string {
+  if (isKeywordList(r)) {
+    // sanctions_source:KW:<name> → "Keyword list — <name>"
+    const name = r.created_by!.slice(
+      MATERIALIZED_PREFIX.length + KEYWORD_LIST_INNER_PREFIX.length
+    );
+    return `Keyword list — ${name}`;
+  }
   if (isMaterialized(r)) return r.created_by!.slice(MATERIALIZED_PREFIX.length);
   return "Manual";
 }
@@ -82,7 +97,9 @@ const sourceFilter = ref<RuleSourceFilter>("all");
 const filteredRules = computed<Rule[]>(() => {
   const items = rules.data.value?.items ?? [];
   if (sourceFilter.value === "manual") return items.filter((r) => !isMaterialized(r));
-  if (sourceFilter.value === "materialized") return items.filter(isMaterialized);
+  if (sourceFilter.value === "keyword_lists") return items.filter(isKeywordList);
+  if (sourceFilter.value === "materialized")
+    return items.filter((r) => isMaterialized(r) && !isKeywordList(r));
   return items;
 });
 
@@ -172,7 +189,8 @@ function beginEdit(r: Rule) {
           <select v-model="sourceFilter" class="border rounded px-1 py-0.5 text-xs">
             <option value="all">All</option>
             <option value="manual">Manual only</option>
-            <option value="materialized">Materialized only</option>
+            <option value="materialized">Sanctions-materialized</option>
+            <option value="keyword_lists">Keyword lists</option>
           </select>
         </label>
       </div>

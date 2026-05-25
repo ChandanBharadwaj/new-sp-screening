@@ -11,5 +11,6 @@
     <include file="changes/0004-batch-errors.sql"         relativeToChangelogFile="true"/>
     <include file="changes/0005-storage-hardening.sql"    relativeToChangelogFile="true"/>
     <include file="changes/0006-sanctions-rule-materialization.sql" relativeToChangelogFile="true"/>
+    <include file="changes/0007-keyword-lists.sql"                 relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

@@ -306,6 +306,32 @@ class Threshold(Base):
     source: Mapped[str] = mapped_column(String(16), default="ui")  # yaml_seed | ui
 
 
+class KeywordList(Base):
+    """Manifest for an operator-curated keyword list.
+
+    Content (the keywords themselves) lives in `sanctioned_commodity` under
+    `source = 'KW:<name>'`; this row carries the list-level metadata: scope,
+    threshold, the CSV path on disk, and bookkeeping. See migration 0007 and
+    `app/refdata/keyword_lists/ingest.py`.
+    """
+
+    __tablename__ = "keyword_list"
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str | None] = mapped_column(Text)
+    origin_iso: Mapped[str | None] = mapped_column(CHAR(2))
+    destination_iso: Mapped[str | None] = mapped_column(CHAR(2))
+    direction: Mapped[str | None] = mapped_column(Text)  # import_from | export_to | both
+    restriction_type: Mapped[str] = mapped_column(Text, nullable=False, default="watchlist")
+    default_threshold: Mapped[float] = mapped_column(nullable=False, default=0.55)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    source_file: Mapped[str | None] = mapped_column(Text)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class SanctionsRuleConfig(Base):
     """Per-source toggle + tuning for the ScreeningRule materializer.
 

@@ -39,6 +39,8 @@ services:
       LIQUIBASE_COMMAND_USERNAME: screening
       LIQUIBASE_COMMAND_PASSWORD: screening
       REDIS_URL: redis://redis:6379/0
+      # First-boot data seed: set to false in dev to skip network fetches.
+      BOOTSTRAP_ON_START: "true"
     ports:
       - "8000:8000"
     volumes:
@@ -60,6 +62,8 @@ services:
       LIQUIBASE_COMMAND_USERNAME: screening
       LIQUIBASE_COMMAND_PASSWORD: screening
       REDIS_URL: redis://redis:6379/0
+      # The app container handles the seed; the worker re-uses the shared ./data volume.
+      BOOTSTRAP_ON_START: "false"
     volumes:
       - ./artifacts:/app/artifacts
       - ./data:/app/data

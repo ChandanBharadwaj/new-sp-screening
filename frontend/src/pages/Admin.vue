@@ -6,6 +6,9 @@ import SourceCard, { type Source } from "../components/admin/SourceCard.vue";
 import RuleMaterializationPanel, {
   type RuleMaterializationItem,
 } from "../components/admin/RuleMaterializationPanel.vue";
+import KeywordListPanel, {
+  type KeywordListItem,
+} from "../components/admin/KeywordListPanel.vue";
 
 const sources = useFetch<{ sources: Source[] }>({
   key: ["admin", "sources"],
@@ -18,6 +21,35 @@ const ruleMaterialization = useFetch<{ items: RuleMaterializationItem[] }>({
   fetcher: () =>
     api.get<{ items: RuleMaterializationItem[] }>("/api/v1/admin/rule-materialization"),
 });
+
+const keywordLists = useFetch<{ items: KeywordListItem[] }>({
+  key: ["admin", "keyword-lists"],
+  fetcher: () =>
+    api.get<{ items: KeywordListItem[] }>("/api/v1/admin/keyword-lists"),
+});
+
+const newListName = ref("");
+const newListLabel = ref("");
+const createPending = ref(false);
+const createError = ref<Error | null>(null);
+
+async function createList() {
+  if (!newListName.value) return;
+  createPending.value = true;
+  createError.value = null;
+  try {
+    await api.put(`/api/v1/admin/keyword-lists/${newListName.value}`, {
+      label: newListLabel.value || null,
+    });
+    invalidateQueries(["admin", "keyword-lists"]);
+    newListName.value = "";
+    newListLabel.value = "";
+  } catch (e: any) {
+    createError.value = e instanceof Error ? e : new Error(String(e));
+  } finally {
+    createPending.value = false;
+  }
+}
 
 const runAllPending = ref(false);
 const resetPending = ref(false);
@@ -123,6 +155,60 @@ const orderedKinds = computed(() =>
         </div>
       </div>
     </template>
+
+    <section class="bg-white border rounded-lg p-4 shadow-sm mt-2">
+      <h2 class="text-lg font-semibold">Keyword lists</h2>
+      <p class="text-sm text-slate-600 mt-1">
+        Operator-curated CSV lists of sanctioned words and phrases (e.g. "seafood").
+        Each list lands its keywords in the same
+        <code class="font-mono text-xs">sanctioned_commodity</code> table as
+        OFAC/EU/UN data and is materialized into
+        <code class="font-mono text-xs">screening_rule</code> rows automatically.
+        CSV must contain a <code class="font-mono text-xs">keywords</code> column with
+        one entry per row.
+      </p>
+
+      <div class="flex flex-wrap items-end gap-2 mt-3 bg-slate-50 border rounded p-3">
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">List name (lowercase, no spaces)</span>
+          <input
+            v-model="newListName"
+            class="border rounded px-2 py-1 text-sm font-mono w-48"
+            placeholder="seafood"
+          />
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">Label (optional)</span>
+          <input
+            v-model="newListLabel"
+            class="border rounded px-2 py-1 text-sm w-64"
+            placeholder="Restricted seafood"
+          />
+        </label>
+        <button
+          class="bg-slate-900 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50"
+          :disabled="!newListName || createPending"
+          @click="createList"
+        >Create list</button>
+        <span v-if="createError" class="text-xs text-red-700">{{ createError.message }}</span>
+      </div>
+
+      <p
+        v-if="keywordLists.isLoading.value || !keywordLists.data.value"
+        class="text-slate-500 text-sm mt-3"
+      >Loading…</p>
+      <p
+        v-else-if="keywordLists.data.value.items.length === 0"
+        class="text-slate-500 text-sm mt-3"
+      >No keyword lists yet. Create one above, upload a CSV, then click Run.</p>
+      <div v-else class="grid gap-3 mt-3">
+        <KeywordListPanel
+          v-for="kl in keywordLists.data.value.items"
+          :key="kl.name"
+          :item="kl"
+        />
+      </div>
+    </section>
 
     <section class="bg-white border rounded-lg p-4 shadow-sm mt-2">
       <h2 class="text-lg font-semibold">Semantic rule materialization</h2>

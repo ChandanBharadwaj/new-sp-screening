@@ -142,6 +142,7 @@ async def score(
                 "version": rule.version,
                 "mode": mode,
                 "per_phrase": per_phrase_view,
+                "created_by": rule.created_by,
             }
         )
     out.sort(key=lambda r: r["phrase_similarity"], reverse=True)
