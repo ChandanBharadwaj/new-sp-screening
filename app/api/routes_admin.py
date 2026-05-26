@@ -167,20 +167,6 @@ SOURCES: list[dict[str, Any]] = [
         "publisher_url": "https://www.bis.doc.gov/index.php/regulations/commerce-control-list-ccl",
     },
     {
-        "source": "OFAC_SDN",
-        "label": "US Treasury OFAC Specially Designated Nationals (SDN)",
-        "kind": "sanctions",
-        "auto_download": False,
-        "files": [
-            {"key": "sdn", "label": "sdn.csv", "path": "data/sanctions/ofac/sdn.csv", "accept": ".csv"},
-            {"key": "add", "label": "add.csv (addresses)", "path": "data/sanctions/ofac/add.csv", "accept": ".csv", "optional": True},
-            {"key": "alt", "label": "alt.csv (aliases)", "path": "data/sanctions/ofac/alt.csv", "accept": ".csv", "optional": True},
-        ],
-        "params_schema": {},
-        "depends_on": [],
-        "publisher_url": "https://sanctionslist.ofac.treas.gov/Home/SdnList",
-    },
-    {
         "source": "ITAR_USML",
         "label": "US Munitions List (ITAR, 22 CFR § 121)",
         "kind": "sanctions",
@@ -252,28 +238,6 @@ SOURCES: list[dict[str, Any]] = [
         "depends_on": ["HTS"],
         "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-591",
     },
-    {
-        "source": "UN_CONSOLIDATED",
-        "label": "UN Consolidated Sanctions List",
-        "kind": "sanctions",
-        "auto_download": True,
-        "files": [],
-        "params_schema": {},
-        "depends_on": [],
-        "publisher_url": "https://main.un.org/securitycouncil/en/sanctions/un-sc-consolidated-list",
-    },
-    {
-        "source": "EU_CONSOLIDATED",
-        "label": "EU Consolidated Financial Sanctions",
-        "kind": "sanctions",
-        "auto_download": False,
-        "files": [
-            {"key": "file", "label": "FSF XML", "path": "data/sanctions/eu_consolidated.xml", "accept": ".xml"},
-        ],
-        "params_schema": {},
-        "depends_on": [],
-        "publisher_url": "https://webgate.ec.europa.eu/europeaid/fsd/fsf/public/",
-    },
 ]
 
 SOURCES_BY_NAME = {s["source"]: s for s in SOURCES}
@@ -299,7 +263,9 @@ async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict
     train_by_source = {s: int(n) for s, n in train_by_source_rows}
     sanc_by_source_rows = (
         await db.execute(
-            select(SanctionedCommodity.source, func.count()).group_by(SanctionedCommodity.source)
+            select(SanctionedCommodity.source, func.count())
+            .where(SanctionedCommodity.sys_to.is_(None))
+            .group_by(SanctionedCommodity.source)
         )
     ).all()
     sanc_by_source = {s: int(n) for s, n in sanc_by_source_rows}
@@ -716,7 +682,10 @@ async def _counts_for_lists(db: AsyncSession, names: list[str]) -> tuple[dict[st
     sanc_rows = (
         await db.execute(
             select(SanctionedCommodity.source, func.count())
-            .where(SanctionedCommodity.source.in_(sources))
+            .where(
+                SanctionedCommodity.source.in_(sources),
+                SanctionedCommodity.sys_to.is_(None),
+            )
             .group_by(SanctionedCommodity.source)
         )
     ).all()
@@ -873,13 +842,25 @@ async def delete_keyword_list(
 ) -> dict[str, Any]:
     _validate_list_name(name)
     source = keyword_list_ingest.source_key(name)
-    # Drop all sanctioned_commodity rows for this list (CASCADE clears country_rule
-    # + aliases). The materializer's orphan path then soft-deactivates the rules
-    # — call it explicitly here since no re-ingest will follow.
-    await db.execute(
-        text("DELETE FROM sanctioned_commodity WHERE source = :s"),
+    # Logically delete this list's commodities: close the current version of each
+    # row (bitemporal — migration 0009) so screening stops matching while history
+    # is preserved for replay. Companion country_rule rows are deactivated.
+    closed = await db.execute(
+        text(
+            "UPDATE sanctioned_commodity SET sys_to = now() "
+            "WHERE source = :s AND sys_to IS NULL RETURNING id"
+        ),
         {"s": source},
     )
+    closed_ids = [row[0] for row in closed.fetchall()]
+    if closed_ids:
+        await db.execute(
+            text(
+                "UPDATE country_rule SET active = false "
+                "WHERE sanctioned_commodity_id = ANY(:ids)"
+            ),
+            {"ids": closed_ids},
+        )
     # Disable materialization for the source.
     cfg = (
         await db.execute(

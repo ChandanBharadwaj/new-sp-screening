@@ -12,5 +12,10 @@
     <include file="changes/0005-storage-hardening.sql"    relativeToChangelogFile="true"/>
     <include file="changes/0006-sanctions-rule-materialization.sql" relativeToChangelogFile="true"/>
     <include file="changes/0007-keyword-lists.sql"                 relativeToChangelogFile="true"/>
+    <include file="changes/0008-iso-check.sql"                     relativeToChangelogFile="true"/>
+    <include file="changes/0009-bitemporal.sql"                    relativeToChangelogFile="true"/>
+    <include file="changes/0010-policy-plane.sql"                  relativeToChangelogFile="true"/>
+    <include file="changes/0011-embedding-versioning.sql"          relativeToChangelogFile="true"/>
+    <include file="changes/0012-confidence-policy.sql"             relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

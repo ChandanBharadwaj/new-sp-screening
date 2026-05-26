@@ -7,8 +7,10 @@ on a screening. Spec C2 forbids a categorical disposition (CLEAR/REVIEW/BLOCK), 
 the surface here is intentionally narrow: `{abstained, reason, fallback_level}`.
 Downstream systems decide what to do with it.
 
-Tunable thresholds are stable defaults; calibration against eval gold splits is
-follow-up work.
+The threshold arguments default to stable constants but in production are supplied
+by the orchestrator from the effective-dated `inference_threshold` table (item 10)
+via the per-request policy snapshot. Isotonic calibration of these values against
+gold splits is item 3 (follow-up).
 """
 from __future__ import annotations
 
@@ -23,7 +25,13 @@ def _normalize(scores: list[float]) -> list[float]:
     return [max(x, 0.0) / s for x in scores]
 
 
-def compute(candidates: list[dict], k: int = 10) -> dict:
+def compute(
+    candidates: list[dict],
+    k: int = 10,
+    *,
+    cross_source_dense_floor: float = 0.4,
+    cross_source_ce_floor: float = 0.4,
+) -> dict:
     if not candidates:
         return {
             "top1_score": 0.0,
@@ -48,9 +56,9 @@ def compute(candidates: list[dict], k: int = 10) -> dict:
     top = candidates[0]
     sc = top.get("score_components", {})
     cross_source_agreement = (
-        sc.get("dense", 0) > 0.4
+        sc.get("dense", 0) > cross_source_dense_floor
         and sc.get("sparse", 0) > 0.0
-        and sc.get("cross_encoder", 0) > 0.4
+        and sc.get("cross_encoder", 0) > cross_source_ce_floor
     )
 
     return {

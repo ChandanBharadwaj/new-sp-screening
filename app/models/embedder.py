@@ -10,11 +10,12 @@ from app.config import settings
 class Embedder:
     """Wraps BAAI/bge-small-en-v1.5 (or whatever EMBEDDER_MODEL points to)."""
 
-    def __init__(self) -> None:
+    def __init__(self, model_name: str | None = None) -> None:
         from sentence_transformers import SentenceTransformer
 
+        self.model_name = model_name or settings.embedder_model
         t0 = time.perf_counter()
-        self.model = SentenceTransformer(settings.embedder_model, device="cpu")
+        self.model = SentenceTransformer(self.model_name, device="cpu")
         self.load_time_ms = int((time.perf_counter() - t0) * 1000)
         self.dim = self.model.get_sentence_embedding_dimension()
         self.last_call_ms: int | None = None

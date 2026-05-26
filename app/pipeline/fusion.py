@@ -48,6 +48,9 @@ def fuse(ltr: LtrRanker, candidates: list[dict], shipment) -> list[dict]:
                 "chapter_prior": priors.get(c.get("chapter"), 0.0),
                 "candidate_depth": _depth(c),
                 "top1_minus_top2_gap": gap,
+                # Default 1.0 (assume evaluated) when rerank wasn't run; rerank sets
+                # 0.0 explicitly on candidates beyond the cross-encoder cap.
+                "ce_was_evaluated": float(c.get("ce_was_evaluated", 1.0)),
             }
         )
 

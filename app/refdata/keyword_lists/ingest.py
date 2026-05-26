@@ -23,12 +23,10 @@ CSV shape (case-insensitive header match):
     ...
 
 Re-upload semantics: keyword lists are *full replacements*. Re-ingesting the
-same list deletes any `sanctioned_commodity` rows whose `source_record_id` no
-longer appears in the new CSV (CASCADE clears their `country_rule` rows). The
-materializer's existing orphan-soft-deactivation path then deactivates the
-corresponding `screening_rule` rows. This is the right shape for operator
-lists, and intentionally different from the append-only OFAC/EU ingesters that
-must never drop rows the publisher still ships.
+same list goes through the bitemporal upsert, which closes the current version
+(logical delete) of any keyword whose `source_record_id` no longer appears in
+the new CSV, preserving history. The materializer's orphan-soft-deactivation
+path then deactivates the corresponding `screening_rule` rows.
 """
 from __future__ import annotations
 
@@ -38,13 +36,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     KeywordList,
-    SanctionedCommodity,
     SanctionsRuleConfig,
 )
 from app.refdata.common import with_run_logging
@@ -166,12 +163,10 @@ def _country_rules_for(manifest: KeywordList) -> list[dict[str, Any]]:
 def _record_id(src: str, phrase: str) -> str:
     """Content-addressed id for a keyword.
 
-    Deliberately NOT positional: `upsert_sanctioned_commodities` is
-    ON CONFLICT DO NOTHING, so a positional id (KW:list-0) would let an edited
-    keyword at the same row index silently keep the old description / embedding /
-    tsvector. Hashing the phrase means an edit yields a new id — the old row is
-    orphan-deleted and the new one is inserted with a fresh embedding — while an
-    unchanged keyword keeps a stable id (no churn on identical re-runs).
+    Deliberately NOT positional: hashing the phrase means an edited keyword yields
+    a new id, so the old keyword's current version is closed and the new phrase is
+    inserted with a fresh embedding, while an unchanged keyword keeps a stable id
+    (the bitemporal upsert then no-ops on it via content_hash).
     """
     h = hashlib.sha1(phrase.encode("utf-8")).hexdigest()[:12]
     return f"{src}-{h}"
@@ -219,27 +214,6 @@ async def _ensure_materialization_enabled(
         },
     )
     await db.execute(stmt)
-
-
-async def _delete_orphan_commodities(
-    db: AsyncSession, source: str, current_record_ids: set[str]
-) -> int:
-    """Drop sanctioned_commodity rows whose source_record_id is no longer in the CSV.
-
-    CASCADE on `sanctioned_commodity_alias` and `country_rule` clears their dependents.
-    Materialized screening_rule rows are soft-deactivated by the materializer's existing
-    orphan path, which we invoke right after this in `main_async`.
-    """
-    if current_record_ids:
-        stmt = delete(SanctionedCommodity).where(
-            SanctionedCommodity.source == source,
-            SanctionedCommodity.source_record_id.notin_(current_record_ids),
-        )
-    else:
-        # Empty CSV → drop everything for this source.
-        stmt = delete(SanctionedCommodity).where(SanctionedCommodity.source == source)
-    result = await db.execute(stmt)
-    return int(result.rowcount or 0)
 
 
 async def load_manifest(db: AsyncSession, list_name: str) -> KeywordList:
@@ -307,17 +281,15 @@ async def main_async(list_name: str) -> None:
     rows = build_rows(list_name, phrases, snap)
 
     async with with_run_logging(src, notes=f"keyword_list={list_name} file={csv_path}") as (db, run):
-        current_ids = {r["source_record_id"] for r in rows}
-        deleted = await _delete_orphan_commodities(db, src, current_ids)
-        if deleted:
-            log.info("keyword_list.orphans_dropped", list_name=list_name, n=deleted)
-
+        # Orphan reconciliation is handled inside the bitemporal upsert: keywords
+        # no longer present in the CSV have their current version closed (logical
+        # delete), preserving history. No separate hard-delete pass.
         counts = await upsert_sanctioned_commodities(db, rows, source=src, run=run)
         await _ensure_materialization_enabled(db, src, float(snap.default_threshold))
         run.rows_upserted = counts["sanctioned"]
         run.notes = (
             (run.notes or "")
-            + f" | rules={counts['rules']} | deleted={deleted}"
+            + f" | rules={counts['rules']} | closed={counts.get('closed', 0)}"
         )
 
     async with SessionLocal() as final_db:

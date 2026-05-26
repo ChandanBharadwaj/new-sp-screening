@@ -9,7 +9,7 @@ parser and target table — but they share a small set of helpers and the
 
 ```mermaid
 flowchart LR
-    src[(Upstream publisher<br/>OFAC / EU / UN / BIS / ITAR<br/>HTS / WCO / CROSS / Schedule B<br/>country-program YAML)]
+    src[(Upstream publisher<br/>BIS / ITAR / EU dual-use / EU Russia<br/>HTS / WCO / CROSS / Schedule B<br/>country-program YAML)]
 
     cli[CLI:<br/>python -m app.refdata.&lt;source&gt;.ingest]
     api[POST /api/v1/refdata/run]
@@ -25,8 +25,7 @@ flowchart LR
     src --> parse
     parse --> upsert[upsert_sanctioned_commodities<br/>sanctions/common.py:21]
     upsert --> embed[Embedder.encode_batch<br/>vector 384-dim]
-    upsert --> tsv[update_tsv_for_table<br/>description_tsv]
-    upsert --> sc[(sanctioned_commodity)]
+    upsert --> sc[(sanctioned_commodity<br/>bitemporal: sys_to IS NULL = current<br/>description_tsv GENERATED)]
     upsert --> cr[(country_rule)]
     parse --> ali[insert_aliases<br/>sanctions/common.py:171]
     ali --> sca[(sanctioned_commodity_alias)]
@@ -37,9 +36,12 @@ Three things are happening together in every ingester:
 1. A `RefdataRun` row is opened in `running` state, and is updated to
    `success` or `failed` by the `with_run_logging` context manager.
 2. The parser yields canonical row dicts.
-3. The shared upserter writes them with `ON CONFLICT DO NOTHING` against
-   the natural key, computes embeddings in batches, and refreshes the
-   `description_tsv` full-text vector.
+3. The shared upserter performs a content-hash-driven **bitemporal** upsert:
+   unchanged rows are a no-op, changed rows close the current version
+   (`sys_to = now()`) and open a new one, and rows that vanished from the feed
+   have their current version closed (logical delete, scoped to the source).
+   Embeddings are computed in batches only for new/changed rows;
+   `description_tsv` is a generated stored column, so no explicit refresh runs.
 
 ## Source matrix
 
@@ -51,10 +53,7 @@ Three things are happening together in every ingester:
 | `CROSS` | HTML (CBP rulings) | `hs_training_example` | same | `app/refdata/cross/scraper.py` + `ingest.py` |
 | `HsEntityIndex` | Derived via GLiNER NER over `hs_code` | `hs_entity_index` | `(hs_code, entity_type, entity_value)` PK | `app/refdata/hs_entities/build.py` |
 | `GoldAssembly` | Derived from `hs_training_example` | files at `eval/gold/splits/*.jsonl` | n/a (file overwrite) | `app/refdata/gold/assemble.py` |
-| `OFAC_SDN` | CSV (sdn.csv, add.csv, alt.csv) | `sanctioned_commodity` + `sanctioned_commodity_alias` | `uq_sanctioned_commodity_source_recid` | `app/refdata/sanctions/ofac_sdn/ingest.py` |
-| `EU_CONSOLIDATED` | XML (FSF) | `sanctioned_commodity` + aliases | same | `app/refdata/sanctions/eu_consolidated/ingest.py` |
-| `UN_CONSOLIDATED` | XML | `sanctioned_commodity` + aliases | same | `app/refdata/sanctions/un/ingest.py` |
-| `EU_DUAL_USE` | XLSX + crosswalk XLSX | `sanctioned_commodity` + `country_rule` | same | `app/refdata/sanctions/eu_dual_use/ingest.py` |
+| `EU_DUAL_USE` | XLSX + crosswalk XLSX | `sanctioned_commodity` + `country_rule` | current-version partial unique on `(source, source_record_id)` | `app/refdata/sanctions/eu_dual_use/ingest.py` |
 | `EU_RUSSIA` | XLSX per annex | `sanctioned_commodity` + `country_rule` | same | `app/refdata/sanctions/eu_russia/ingest.py` |
 | `BIS_CCL` | CSV + HS crosswalk | `sanctioned_commodity` | same | `app/refdata/sanctions/bis_ccl/ingest.py` |
 | `ITAR_USML` | CSV (extracted from PDF) | `sanctioned_commodity` | same | `app/refdata/sanctions/itar/ingest.py` |
@@ -71,7 +70,7 @@ file expectations, what's intentionally skipped — lives in the existing
 
 ```text
 id                bigserial PRIMARY KEY
-source            varchar(32) NOT NULL    -- "OFAC_SDN" | "EU_DUAL_USE" | "BIS_CCL" | ...
+source            varchar(32) NOT NULL    -- "BIS_CCL" | "EU_DUAL_USE" | "ITAR_USML" | ...
 source_record_id  text                    -- external stable id (idempotency component)
 description       text NOT NULL           -- normalized human description (≤2000 chars)
 hs_codes          varchar(10)[]           -- array of 6-digit subheadings (post expansion)
@@ -80,7 +79,12 @@ effective_from    date                    -- nullable
 effective_to      date                    -- nullable
 provenance_url    text                    -- publisher URL
 embedding         vector(384)             -- BGE-small embedding of description
-description_tsv   tsvector                -- to_tsvector('english', description)
+embedding_model   text                    -- encoder that produced `embedding` (item 1)
+description_tsv   tsvector                -- GENERATED ALWAYS AS to_tsvector('simple', description) STORED
+commodity_id      bigint                  -- logical-commodity key (shared across versions)
+content_hash      bytea                   -- sha256 of audit-relevant fields (change detection)
+valid_from/to     timestamptz             -- application time (when in force, reality)
+sys_from/to       timestamptz             -- system time; current version == sys_to IS NULL
 created_at        timestamptz DEFAULT now()
 ```
 
@@ -226,7 +230,7 @@ Three entry points, all eventually call the same `main_async`:
 The dispatch table in `app/workers/refdata_jobs.py` is the source of
 truth for which `source` strings the system accepts and which optional
 parameters each one takes (e.g., `EU_RUSSIA` accepts `direction` and
-`annex`, `OFAC_SDN` accepts `sdn`/`add`/`alt` paths).
+`annex`, `BIS_CCL` accepts `ccl_file`/`crosswalk_file` paths).
 
 ## Idempotency in one paragraph
 

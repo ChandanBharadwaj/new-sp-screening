@@ -23,7 +23,7 @@ def test_empty_returns_empty() -> None:
 
 def test_groups_only_keyword_list_rows() -> None:
     matches = [
-        _match(created_by="sanctions_source:OFAC_SDN", phrase="x", sim=0.9),
+        _match(created_by="sanctions_source:ITAR_USML", phrase="x", sim=0.9),
         _match(created_by=None, phrase="operator phrase", sim=0.7),
         _match(created_by="sanctions_source:KW:seafood", phrase="tuna", sim=0.8),
         _match(created_by="sanctions_source:KW:seafood", phrase="cod", sim=0.6),

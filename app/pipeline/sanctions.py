@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.embedder import Embedder
 from app.models.reranker import Reranker
+from app.pipeline.embedding_generation import ALLOWED_COLUMNS, active_embedding
 from app.pipeline.normalize_party import is_short_name, normalize_party
 
 # Apply this predicate to every retrieval path so an expired sanction (eg. a
@@ -35,6 +36,10 @@ _EFFECTIVE_DATE_CLAUSE = (
     "AND (sc.effective_from IS NULL OR sc.effective_from <= CURRENT_DATE) "
     "AND (sc.effective_to   IS NULL OR sc.effective_to   >= CURRENT_DATE)"
 )
+
+# Bitemporal hot path: screen only the current version of each commodity
+# (migration 0009). Historical versions exist solely for point-in-time replay.
+_CURRENT_VERSION_CLAUSE = "AND sc.sys_to IS NULL"
 
 STRUCTURED_QUERY = text(
     f"""
@@ -49,38 +54,49 @@ STRUCTURED_QUERY = text(
       AND (cr.destination_iso IS NULL OR cr.destination_iso = :destination)
       AND sc.hs_codes && CAST(:codes AS varchar[])
       {_EFFECTIVE_DATE_CLAUSE}
+      {_CURRENT_VERSION_CLAUSE}
     LIMIT :k
     """
 )
 
-DENSE_QUERY = text(
-    f"""
-    SELECT sc.id, sc.source, sc.source_record_id, sc.description, sc.hs_codes,
-           sc.restriction_type, sc.provenance_url,
-           1.0 - (sc.embedding <=> CAST(:q AS vector)) AS similarity
-    FROM sanctioned_commodity sc
-    WHERE sc.embedding IS NOT NULL
-      {_EFFECTIVE_DATE_CLAUSE}
-      AND EXISTS (
-        SELECT 1 FROM country_rule cr
-        WHERE cr.sanctioned_commodity_id = sc.id
-          AND cr.active = true
-          AND (cr.origin_iso IS NULL OR cr.origin_iso = :origin)
-          AND (cr.destination_iso IS NULL OR cr.destination_iso = :destination)
-      )
-    ORDER BY sc.embedding <=> CAST(:q AS vector)
-    LIMIT :k
+def _dense_query(col: str):
+    """Build the sanctions dense-ANN query against the active embedding column.
+
+    `col` is the versioned active column from embedding_generation (item 1),
+    validated against ALLOWED_COLUMNS before it reaches here — never user input.
     """
-)
+    if col not in ALLOWED_COLUMNS:
+        raise ValueError(f"unsafe embedding column {col!r}")
+    return text(
+        f"""
+        SELECT sc.id, sc.source, sc.source_record_id, sc.description, sc.hs_codes,
+               sc.restriction_type, sc.provenance_url,
+               1.0 - (sc.{col} <=> CAST(:q AS vector)) AS similarity
+        FROM sanctioned_commodity sc
+        WHERE sc.{col} IS NOT NULL
+          {_EFFECTIVE_DATE_CLAUSE}
+          {_CURRENT_VERSION_CLAUSE}
+          AND EXISTS (
+            SELECT 1 FROM country_rule cr
+            WHERE cr.sanctioned_commodity_id = sc.id
+              AND cr.active = true
+              AND (cr.origin_iso IS NULL OR cr.origin_iso = :origin)
+              AND (cr.destination_iso IS NULL OR cr.destination_iso = :destination)
+          )
+        ORDER BY sc.{col} <=> CAST(:q AS vector)
+        LIMIT :k
+        """
+    )
 
 SPARSE_QUERY = text(
     f"""
     SELECT sc.id, sc.source, sc.source_record_id, sc.description, sc.hs_codes,
            sc.restriction_type, sc.provenance_url,
-           ts_rank_cd(sc.description_tsv, plainto_tsquery('english', :q)) AS rank
+           ts_rank_cd(sc.description_tsv, plainto_tsquery('simple', :q)) AS rank
     FROM sanctioned_commodity sc
-    WHERE sc.description_tsv @@ plainto_tsquery('english', :q)
+    WHERE sc.description_tsv @@ plainto_tsquery('simple', :q)
       {_EFFECTIVE_DATE_CLAUSE}
+      {_CURRENT_VERSION_CLAUSE}
       AND EXISTS (
         SELECT 1 FROM country_rule cr
         WHERE cr.sanctioned_commodity_id = sc.id
@@ -108,6 +124,7 @@ ALIAS_QUERY = text(
     WHERE a.alias %% :q
       AND similarity(a.alias, :q) >= :min_sim
       {_EFFECTIVE_DATE_CLAUSE}
+      {_CURRENT_VERSION_CLAUSE}
     GROUP BY sc.id
     ORDER BY sim DESC
     LIMIT :k
@@ -179,12 +196,16 @@ async def score(
     destination_iso: str | None,
     top_k: int = 50,
     rerank_top: int | None = None,
+    alias_min_sim: float = 0.45,
 ) -> list[dict]:
     if rerank_top is None:
         rerank_top = settings.sanctions_rerank_top_k
 
     # SET LOCAL only affects this transaction — safe to leave on by default.
     await db.execute(text(f"SET LOCAL hnsw.ef_search = {int(settings.hnsw_ef_search)}"))
+
+    # Resolve the active (versioned) embedding column for the dense path (item 1).
+    active_col, _active_model = await active_embedding(db, "sanctioned_commodity")
 
     # If neither side of the route is set, only run semantic; otherwise also run structured.
     structured_task = None
@@ -203,7 +224,8 @@ async def score(
     vec = await asyncio.to_thread(embedder.encode_query, query_text)
     qlit = _vec_literal(vec)
     dense_task = db.execute(
-        DENSE_QUERY, {"q": qlit, "origin": origin_iso, "destination": destination_iso, "k": top_k}
+        _dense_query(active_col),
+        {"q": qlit, "origin": origin_iso, "destination": destination_iso, "k": top_k},
     )
     sparse_task = db.execute(
         SPARSE_QUERY,
@@ -217,7 +239,7 @@ async def score(
     if party_query and not is_short_name(party_query):
         alias_task = db.execute(
             ALIAS_QUERY,
-            {"q": party_query, "min_sim": 0.45, "k": top_k},
+            {"q": party_query, "min_sim": alias_min_sim, "k": top_k},
         )
 
     awaitables = [t for t in (structured_task, dense_task, sparse_task, alias_task) if t is not None]

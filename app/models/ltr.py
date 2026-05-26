@@ -15,6 +15,10 @@ FEATURE_ORDER = [
     "chapter_prior",
     "candidate_depth",
     "top1_minus_top2_gap",
+    # 0/1 mask: was cross_encoder_score produced by the cross-encoder (1) or a
+    # fallback proxy because the candidate fell beyond the rerank cap (0)? Lets the
+    # tree learn that ce_score=fallback means "trust dense/sparse" (item 5).
+    "ce_was_evaluated",
 ]
 
 
@@ -45,7 +49,8 @@ class LtrRanker:
             dtype=np.float32,
         )
         if self.booster is None:
-            # Heuristic blend until a real model is trained.
-            weights = np.array([0.20, 0.10, 0.15, 0.45, 0.05, 0.0, 0.05], dtype=np.float32)
+            # Heuristic blend until a real model is trained. ce_was_evaluated is a
+            # gating signal for the trained tree, not a linear term, so weight 0 here.
+            weights = np.array([0.20, 0.10, 0.15, 0.45, 0.05, 0.0, 0.05, 0.0], dtype=np.float32)
             return [float(s) for s in (x @ weights)]
         return [float(s) for s in self.booster.predict(x)]
