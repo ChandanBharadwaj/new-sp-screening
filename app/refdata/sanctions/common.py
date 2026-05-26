@@ -10,7 +10,6 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.db.models import (
     CountryRule,
     HsCode,
@@ -18,6 +17,7 @@ from app.db.models import (
     SanctionedCommodity,
     SanctionedCommodityAlias,
 )
+from app.pipeline.embedding_generation import active_embedding
 from app.refdata.common import batches, lazy_embedder, mark_progress
 from app.telemetry import log
 
@@ -116,7 +116,11 @@ async def upsert_sanctioned_commodities(
     if not rows:
         return {"sanctioned": 0, "rules": 0}
     embedder = lazy_embedder()
-    model_name = settings.embedder_model
+    # Write to the *active* embedding generation (item 1): normally 'embedding';
+    # after an embedder cutover this becomes 'embedding_v2'. active_model is the
+    # source of truth for the model name stamped on the row.
+    active_col, active_model = await active_embedding(db, "sanctioned_commodity")
+    model_col = "embedding_model" if active_col == "embedding" else "embedding_v2_model"
     n_changed = 0
     n_rules = 0
     seen_recids: list[str] = []
@@ -165,10 +169,10 @@ async def upsert_sanctioned_commodities(
                 effective_to=r.get("effective_to"),
                 provenance_url=r.get("provenance_url"),
                 program_tag=r.get("program_tag"),
-                embedding=v.tolist(),
-                embedding_model=model_name,
                 content_hash=r["_hash"],
             )
+            values[active_col] = v.tolist()
+            values[model_col] = active_model
             if commodity_id is not None:
                 values["commodity_id"] = commodity_id  # new version of an existing commodity
             new_pk = (

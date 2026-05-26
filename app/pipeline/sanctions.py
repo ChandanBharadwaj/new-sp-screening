@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.embedder import Embedder
 from app.models.reranker import Reranker
+from app.pipeline.embedding_generation import ALLOWED_COLUMNS, active_embedding
 from app.pipeline.normalize_party import is_short_name, normalize_party
 
 # Apply this predicate to every retrieval path so an expired sanction (eg. a
@@ -58,26 +59,34 @@ STRUCTURED_QUERY = text(
     """
 )
 
-DENSE_QUERY = text(
-    f"""
-    SELECT sc.id, sc.source, sc.source_record_id, sc.description, sc.hs_codes,
-           sc.restriction_type, sc.provenance_url,
-           1.0 - (sc.embedding <=> CAST(:q AS vector)) AS similarity
-    FROM sanctioned_commodity sc
-    WHERE sc.embedding IS NOT NULL
-      {_EFFECTIVE_DATE_CLAUSE}
-      {_CURRENT_VERSION_CLAUSE}
-      AND EXISTS (
-        SELECT 1 FROM country_rule cr
-        WHERE cr.sanctioned_commodity_id = sc.id
-          AND cr.active = true
-          AND (cr.origin_iso IS NULL OR cr.origin_iso = :origin)
-          AND (cr.destination_iso IS NULL OR cr.destination_iso = :destination)
-      )
-    ORDER BY sc.embedding <=> CAST(:q AS vector)
-    LIMIT :k
+def _dense_query(col: str):
+    """Build the sanctions dense-ANN query against the active embedding column.
+
+    `col` is the versioned active column from embedding_generation (item 1),
+    validated against ALLOWED_COLUMNS before it reaches here — never user input.
     """
-)
+    if col not in ALLOWED_COLUMNS:
+        raise ValueError(f"unsafe embedding column {col!r}")
+    return text(
+        f"""
+        SELECT sc.id, sc.source, sc.source_record_id, sc.description, sc.hs_codes,
+               sc.restriction_type, sc.provenance_url,
+               1.0 - (sc.{col} <=> CAST(:q AS vector)) AS similarity
+        FROM sanctioned_commodity sc
+        WHERE sc.{col} IS NOT NULL
+          {_EFFECTIVE_DATE_CLAUSE}
+          {_CURRENT_VERSION_CLAUSE}
+          AND EXISTS (
+            SELECT 1 FROM country_rule cr
+            WHERE cr.sanctioned_commodity_id = sc.id
+              AND cr.active = true
+              AND (cr.origin_iso IS NULL OR cr.origin_iso = :origin)
+              AND (cr.destination_iso IS NULL OR cr.destination_iso = :destination)
+          )
+        ORDER BY sc.{col} <=> CAST(:q AS vector)
+        LIMIT :k
+        """
+    )
 
 SPARSE_QUERY = text(
     f"""
@@ -195,6 +204,9 @@ async def score(
     # SET LOCAL only affects this transaction — safe to leave on by default.
     await db.execute(text(f"SET LOCAL hnsw.ef_search = {int(settings.hnsw_ef_search)}"))
 
+    # Resolve the active (versioned) embedding column for the dense path (item 1).
+    active_col, _active_model = await active_embedding(db, "sanctioned_commodity")
+
     # If neither side of the route is set, only run semantic; otherwise also run structured.
     structured_task = None
     if candidate_hs_codes:
@@ -212,7 +224,8 @@ async def score(
     vec = await asyncio.to_thread(embedder.encode_query, query_text)
     qlit = _vec_literal(vec)
     dense_task = db.execute(
-        DENSE_QUERY, {"q": qlit, "origin": origin_iso, "destination": destination_iso, "k": top_k}
+        _dense_query(active_col),
+        {"q": qlit, "origin": origin_iso, "destination": destination_iso, "k": top_k},
     )
     sparse_task = db.execute(
         SPARSE_QUERY,

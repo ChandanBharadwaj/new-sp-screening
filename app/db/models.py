@@ -98,6 +98,10 @@ class SanctionedCommodity(Base):
     provenance_url: Mapped[str | None] = mapped_column(Text)
     embedding = mapped_column(Vector(EMBED_DIM), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(Text)
+    # Second-generation vector for an embedder swap (item 1). Populated by the
+    # backfill job; becomes the active column after cutover.
+    embedding_v2 = mapped_column(Vector(EMBED_DIM), nullable=True)
+    embedding_v2_model: Mapped[str | None] = mapped_column(Text)
     program_tag: Mapped[str | None] = mapped_column(Text)
     content_hash: Mapped[bytes | None] = mapped_column(LargeBinary)
     # Bitemporal: NULL upper bound == open/infinity. Current version == sys_to IS NULL.
@@ -338,6 +342,21 @@ class InferenceThreshold(Base):
     created_by: Mapped[str] = mapped_column(Text, default="system")
     approved_by: Mapped[str] = mapped_column(Text, default="bootstrap")
     rationale: Mapped[str] = mapped_column(Text, default="seed from code defaults")
+
+
+class EmbeddingGeneration(Base):
+    """Authoritative embedding column + model per table (item 1).
+
+    Retrieval reads `active_column` to know which vector column to ANN-search;
+    cutover is a single UPDATE of this row. Migration 0009 seeds the
+    sanctioned_commodity row with active_column='embedding'.
+    """
+
+    __tablename__ = "embedding_generation"
+    table_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    active_column: Mapped[str] = mapped_column(Text, nullable=False, default="embedding")
+    active_model: Mapped[str] = mapped_column(Text, nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PolicyParameter(Base):

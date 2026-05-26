@@ -19,6 +19,7 @@ from app.pipeline import (
     sanctions,
     versions,
 )
+from app.pipeline.embedding_generation import active_embedding
 from app.pipeline.policy import get_policy_snapshot
 from app.pipeline.retrieval import dense, entity, sparse, union
 from app.telemetry import StageTimer, log
@@ -177,6 +178,9 @@ async def run_screen(
     # Stamp the policy/threshold version bound to this decision so a later audit
     # retrieves the exact values that were active when the shipment scored (item 10).
     vers["policy_version"] = policy.version
+    # Stamp the active embedding generation used for the sanctions dense path (item 1).
+    _emb_col, _emb_model = await active_embedding(db, "sanctioned_commodity")
+    vers["embedding_generation"] = {"column": _emb_col, "model": _emb_model}
 
     payload = assemble.build(
         sid,

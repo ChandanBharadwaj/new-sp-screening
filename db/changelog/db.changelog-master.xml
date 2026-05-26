@@ -15,5 +15,6 @@
     <include file="changes/0008-iso-check.sql"                     relativeToChangelogFile="true"/>
     <include file="changes/0009-bitemporal.sql"                    relativeToChangelogFile="true"/>
     <include file="changes/0010-policy-plane.sql"                  relativeToChangelogFile="true"/>
+    <include file="changes/0011-embedding-versioning.sql"          relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
