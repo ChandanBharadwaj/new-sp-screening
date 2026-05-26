@@ -5,9 +5,10 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from app.db.models import BatchJob, BatchJobError, ScreeningResult, Shipment
+from app.db.models import BatchJob, BatchJobError, Shipment
 from app.db.session import SessionLocal
 from app.pipeline.orchestrator import run_screen
+from app.pipeline.persistence import build_screening_result
 from app.telemetry import log
 
 
@@ -39,18 +40,9 @@ async def screen_one(
                 currency=ship.currency,
                 metadata=ship.metadata_json,
                 shipment_id=sid,
+                static_versions=ctx.get("versions_static"),
             )
-            res = ScreeningResult(
-                shipment_id=sid,
-                hs_candidates=payload["hs_classification"],
-                sanction_matches={"items": payload["sanction_matches"]},
-                rule_matches={"items": payload["rule_matches"]},
-                extracted_entities=payload["extracted_entities"],
-                confidence_metrics=payload["hs_classification"]["confidence_metrics"],
-                latency_ms=payload["latency_ms"],
-                engine_version=payload["engine_version"],
-            )
-            db.add(res)
+            db.add(build_screening_result(sid, payload))
 
             job = (await db.execute(select(BatchJob).where(BatchJob.id == bid))).scalar_one_or_none()
             if job:

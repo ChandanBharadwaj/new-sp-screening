@@ -1,6 +1,7 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic_extra_types.country import CountryAlpha2
 
 
 class PhraseGroup(BaseModel):
@@ -23,10 +24,17 @@ class RuleIn(BaseModel):
     phrase_group: PhraseGroup | None = None
     threshold: float = Field(ge=0.0, le=1.0)
     conditions: dict[str, Any] | None = None
-    origin_iso: str | None = None
-    destination_iso: str | None = None
+    origin_iso: CountryAlpha2 | None = None
+    destination_iso: CountryAlpha2 | None = None
     active: bool = True
     created_by: str | None = None
+
+    @field_validator("origin_iso", "destination_iso", mode="before")
+    @classmethod
+    def _upper_strip_iso(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.strip().upper()
+        return v
 
     @model_validator(mode="after")
     def _no_empty_group(self) -> "RuleIn":

@@ -4,9 +4,10 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, models
-from app.db.models import ScreeningResult, Shipment
+from app.db.models import Shipment
 from app.models.registry import ModelRegistry
 from app.pipeline.orchestrator import run_screen
+from app.pipeline.persistence import build_screening_result
 from app.schemas.screen import ShipmentIn
 
 router = APIRouter(prefix="/api/v1", tags=["screen"])
@@ -26,18 +27,7 @@ async def _persist(db: AsyncSession, shipment_in: ShipmentIn, payload: dict[str,
         metadata_json=shipment_in.metadata,
     )
     db.add(ship)
-    res = ScreeningResult(
-        shipment_id=sid,
-        hs_candidates=payload["hs_classification"],
-        sanction_matches={"items": payload["sanction_matches"]},
-        rule_matches={"items": payload["rule_matches"]},
-        extracted_entities=payload["extracted_entities"],
-        confidence_metrics=payload["hs_classification"]["confidence_metrics"],
-        latency_ms=payload["latency_ms"],
-        engine_version=payload["engine_version"],
-        versions=payload.get("versions"),
-    )
-    db.add(res)
+    db.add(build_screening_result(sid, payload))
     await db.commit()
 
 

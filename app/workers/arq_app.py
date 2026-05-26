@@ -4,6 +4,7 @@ from arq.connections import RedisSettings
 
 from app.config import settings
 from app.models.registry import load_models
+from app.pipeline import versions
 from app.telemetry import configure_logging, log
 from app.workers.batch_screen import screen_one
 from app.workers.eval_jobs import run_eval_job
@@ -15,6 +16,9 @@ async def startup(ctx: dict) -> None:
     configure_logging()
     log.info("worker.starting")
     ctx["models"] = load_models()
+    # Static version stamp (engine + model hashes), computed once so batch-screened
+    # decisions carry the same audit lineage as the sync API path (item 12).
+    ctx["versions_static"] = versions.compute_static()
     log.info("worker.ready")
 
 

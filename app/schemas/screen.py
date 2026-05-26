@@ -1,18 +1,28 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from pydantic_extra_types.country import CountryAlpha2
 
 
 class ShipmentIn(BaseModel):
     external_ref: str | None = None
     commodity_text: str
     cargo_text: str | None = None
-    origin_iso: str | None = None
-    destination_iso: str | None = None
+    # Validated against ISO 3166-1 alpha-2 and normalized to upper-case so the
+    # case-sensitive country_rule join (sanctions.py) always matches.
+    origin_iso: CountryAlpha2 | None = None
+    destination_iso: CountryAlpha2 | None = None
     shipment_value: float | None = None
     currency: str | None = None
     metadata: dict[str, Any] | None = None
+
+    @field_validator("origin_iso", "destination_iso", mode="before")
+    @classmethod
+    def _upper_strip_iso(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.strip().upper()
+        return v
 
 
 class HsCandidate(BaseModel):
