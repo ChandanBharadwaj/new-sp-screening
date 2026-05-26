@@ -187,6 +187,7 @@ async def score(
     destination_iso: str | None,
     top_k: int = 50,
     rerank_top: int | None = None,
+    alias_min_sim: float = 0.45,
 ) -> list[dict]:
     if rerank_top is None:
         rerank_top = settings.sanctions_rerank_top_k
@@ -225,7 +226,7 @@ async def score(
     if party_query and not is_short_name(party_query):
         alias_task = db.execute(
             ALIAS_QUERY,
-            {"q": party_query, "min_sim": 0.45, "k": top_k},
+            {"q": party_query, "min_sim": alias_min_sim, "k": top_k},
         )
 
     awaitables = [t for t in (structured_task, dense_task, sparse_task, alias_task) if t is not None]

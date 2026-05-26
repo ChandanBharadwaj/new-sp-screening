@@ -7,8 +7,10 @@ on a screening. Spec C2 forbids a categorical disposition (CLEAR/REVIEW/BLOCK), 
 the surface here is intentionally narrow: `{abstained, reason, fallback_level}`.
 Downstream systems decide what to do with it.
 
-Tunable thresholds are stable defaults; calibration against eval gold splits is
-follow-up work.
+The threshold arguments default to stable constants but in production are supplied
+by the orchestrator from the effective-dated `inference_threshold` table (item 10)
+via the per-request policy snapshot. Isotonic calibration of these values against
+gold splits is item 3 (follow-up).
 """
 from __future__ import annotations
 

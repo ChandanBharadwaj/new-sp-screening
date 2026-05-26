@@ -19,12 +19,14 @@ from app.pipeline import (
     sanctions,
     versions,
 )
+from app.pipeline.policy import get_policy_snapshot
 from app.pipeline.retrieval import dense, entity, sparse, union
 from app.telemetry import StageTimer, log
 
-# Confidence floor below which we ignore a multi-commodity split and fall back to
-# single-commodity. Tunable; see decompose.py.
-_DECOMPOSE_CONF_GATE = 0.5
+# Fallback defaults if the policy plane has not been seeded; the live values come
+# from inference_threshold / policy_parameter via the per-request snapshot.
+_DECOMPOSE_CONF_GATE_DEFAULT = 0.5
+_ALIAS_MIN_SIM_DEFAULT = 0.45
 
 
 async def _hs_rank_for_text(
@@ -67,6 +69,12 @@ async def run_screen(
     timer = StageTimer()
     sid = shipment_id or uuid4()
 
+    # One policy snapshot per request: every threshold/parameter used below comes
+    # from this snapshot, so a mid-request policy change can't split a decision.
+    policy = await get_policy_snapshot(db)
+    decompose_gate = float(policy.param("decompose", "conf_gate", _DECOMPOSE_CONF_GATE_DEFAULT))
+    alias_min_sim = float(policy.param("alias_match", "min_similarity", _ALIAS_MIN_SIM_DEFAULT))
+
     raw_text = commodity_text + (" " + cargo_text if cargo_text else "")
     norm = normalize.normalize(raw_text)
 
@@ -93,7 +101,7 @@ async def run_screen(
     # surface a list of top-1 HS candidates. Single-commodity case is unaffected.
     decomp = decompose.split_into_commodities(norm, entities_flat)
     multi_top1: list[dict] | None = None
-    if decomp.confidence >= _DECOMPOSE_CONF_GATE and len(decomp.fragments) >= 2:
+    if decomp.confidence >= decompose_gate and len(decomp.fragments) >= 2:
         sub_results = []
         for frag in decomp.fragments:
             # Re-extract NER per fragment so entity overlap features remain local.
@@ -132,6 +140,7 @@ async def run_screen(
             candidate_hs_codes=top_hs_codes,
             origin_iso=origin_iso,
             destination_iso=destination_iso,
+            alias_min_sim=alias_min_sim,
         )
     )
     rules_t = asyncio.create_task(
@@ -149,7 +158,13 @@ async def run_screen(
 
     # Stage 6 — confidence + abstention + version stamp + assemble.
     conf = confidence.compute(candidates)
-    abst = confidence.compute_abstention(candidates, conf)
+    abst = confidence.compute_abstention(
+        candidates,
+        conf,
+        top1_threshold=policy.threshold("hs_classify", "min_top1", 0.45),
+        gap_threshold=policy.threshold("hs_classify", "min_gap", 0.05),
+        chapter_consensus_floor=policy.threshold("hs_classify", "min_chapter_consensus", 0.40),
+    )
     fallback = (
         confidence.fallback_candidate(candidates, abst.get("fallback_level"))
         if abst.get("abstained")
@@ -159,6 +174,9 @@ async def run_screen(
     # refdata snapshot is queried per-request to capture latest successful ingest times.
     static = static_versions or versions.compute_static()
     vers = await versions.build(db, static)
+    # Stamp the policy/threshold version bound to this decision so a later audit
+    # retrieves the exact values that were active when the shipment scored (item 10).
+    vers["policy_version"] = policy.version
 
     payload = assemble.build(
         sid,

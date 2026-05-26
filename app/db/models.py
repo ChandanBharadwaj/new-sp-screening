@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -318,6 +319,43 @@ class Threshold(Base):
     value: Mapped[float] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     source: Mapped[str] = mapped_column(String(16), default="ui")  # yaml_seed | ui
+
+
+class InferenceThreshold(Base):
+    """Effective-dated decision thresholds read by the screening pipeline (item 10).
+
+    Distinct from `Threshold` (CI eval gates). Migration 0010 enforces non-overlap
+    per (pipeline, parameter) in time so exactly one value is active at any instant.
+    """
+
+    __tablename__ = "inference_threshold"
+    threshold_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    pipeline: Mapped[str] = mapped_column(Text, nullable=False)
+    parameter: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[float] = mapped_column(Numeric, nullable=False)
+    calibrated_from: Mapped[str] = mapped_column(Text, default="code_default")
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(Text, default="system")
+    approved_by: Mapped[str] = mapped_column(Text, default="bootstrap")
+    rationale: Mapped[str] = mapped_column(Text, default="seed from code defaults")
+
+
+class PolicyParameter(Base):
+    """Effective-dated policy values (item 4). jsonb `value` holds scalars, vectors, limits."""
+
+    __tablename__ = "policy_parameter"
+    param_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    scope: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(Text, default="system")
+    approved_by: Mapped[str] = mapped_column(Text, default="bootstrap")
+    change_ticket: Mapped[str] = mapped_column(Text, default="BOOTSTRAP")
+    rationale: Mapped[str] = mapped_column(Text, default="initial seed from code defaults")
+    canary_pct: Mapped[int] = mapped_column(Integer, default=100)
 
 
 class KeywordList(Base):
