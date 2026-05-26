@@ -56,5 +56,5 @@ INSERT INTO policy_parameter (scope, name, value) VALUES
     ('gliner',      'min_score',        '0.4'),
     ('alias_match', 'min_similarity',   '0.45'),
     ('decompose',   'conf_gate',        '0.5'),
-    ('ltr',         'fallback_weights', '[0.20,0.10,0.15,0.45,0.05,0.0,0.05]');
+    ('ltr',         'fallback_weights', '[0.20,0.10,0.15,0.45,0.05,0.0,0.05,0.0]');
 --rollback DROP TABLE IF EXISTS policy_parameter;

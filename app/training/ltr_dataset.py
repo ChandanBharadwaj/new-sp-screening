@@ -104,6 +104,7 @@ async def build_dataset(
                             "chapter_prior": 0.0,  # filled at fusion time; stays 0 in training
                             "candidate_depth": float(c.get("level") or 6),
                             "top1_minus_top2_gap": 0.0,
+                            "ce_was_evaluated": float(c.get("ce_was_evaluated", 1.0)),
                             "hs_code": c.get("hs_code"),
                             "gold_hs_code": gold_code,
                         }

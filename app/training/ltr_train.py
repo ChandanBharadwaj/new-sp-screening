@@ -46,6 +46,10 @@ def fit_booster(
         "learning_rate": 0.05,
         "num_leaves": 31,
         "min_data_in_leaf": 5,
+        # Align the lambdarank gradient horizon with the cross-encoder hard cap
+        # (rerank._CE_HARD_CAP) so optimisation matches what deployment actually
+        # reranks (item 5).
+        "lambdarank_truncation_level": 50,
         "verbose": -1,
     }
     if log_fn:
