@@ -25,7 +25,13 @@ def _normalize(scores: list[float]) -> list[float]:
     return [max(x, 0.0) / s for x in scores]
 
 
-def compute(candidates: list[dict], k: int = 10) -> dict:
+def compute(
+    candidates: list[dict],
+    k: int = 10,
+    *,
+    cross_source_dense_floor: float = 0.4,
+    cross_source_ce_floor: float = 0.4,
+) -> dict:
     if not candidates:
         return {
             "top1_score": 0.0,
@@ -50,9 +56,9 @@ def compute(candidates: list[dict], k: int = 10) -> dict:
     top = candidates[0]
     sc = top.get("score_components", {})
     cross_source_agreement = (
-        sc.get("dense", 0) > 0.4
+        sc.get("dense", 0) > cross_source_dense_floor
         and sc.get("sparse", 0) > 0.0
-        and sc.get("cross_encoder", 0) > 0.4
+        and sc.get("cross_encoder", 0) > cross_source_ce_floor
     )
 
     return {

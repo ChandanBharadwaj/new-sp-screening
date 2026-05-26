@@ -20,7 +20,7 @@ from app.pipeline import (
     versions,
 )
 from app.pipeline.embedding_generation import active_embedding
-from app.pipeline.policy import get_policy_snapshot
+from app.pipeline.policy import PolicySnapshot, get_policy_snapshot
 from app.pipeline.retrieval import dense, entity, sparse, union
 from app.telemetry import StageTimer, log
 
@@ -66,13 +66,15 @@ async def run_screen(
     metadata: dict[str, Any] | None = None,
     shipment_id: UUID | None = None,
     static_versions: dict[str, Any] | None = None,
+    policy_override: PolicySnapshot | None = None,
 ) -> dict[str, Any]:
     timer = StageTimer()
     sid = shipment_id or uuid4()
 
     # One policy snapshot per request: every threshold/parameter used below comes
     # from this snapshot, so a mid-request policy change can't split a decision.
-    policy = await get_policy_snapshot(db)
+    # `policy_override` lets the calibration sweep trial values without DB writes.
+    policy = policy_override if policy_override is not None else await get_policy_snapshot(db)
     decompose_gate = float(policy.param("decompose", "conf_gate", _DECOMPOSE_CONF_GATE_DEFAULT))
     alias_min_sim = float(policy.param("alias_match", "min_similarity", _ALIAS_MIN_SIM_DEFAULT))
 
@@ -158,7 +160,11 @@ async def run_screen(
     timer.mark("sanctions_rules")
 
     # Stage 6 — confidence + abstention + version stamp + assemble.
-    conf = confidence.compute(candidates)
+    conf = confidence.compute(
+        candidates,
+        cross_source_dense_floor=float(policy.param("confidence", "cross_source_dense_floor", 0.4)),
+        cross_source_ce_floor=float(policy.param("confidence", "cross_source_ce_floor", 0.4)),
+    )
     abst = confidence.compute_abstention(
         candidates,
         conf,

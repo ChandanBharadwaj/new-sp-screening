@@ -54,6 +54,16 @@ class PolicySnapshot:
     def param(self, scope: str, name: str, default: Any) -> Any:
         return self._params.get((scope, name), default)
 
+    @classmethod
+    def from_overrides(
+        cls,
+        thresholds: dict[tuple[str, str], float] | None = None,
+        params: dict[tuple[str, str], Any] | None = None,
+    ) -> PolicySnapshot:
+        """Build an in-memory snapshot for trialing values (e.g. calibration sweeps)
+        without touching the DB or the process cache."""
+        return cls(dict(thresholds or {}), dict(params or {}), "override", time.monotonic())
+
 
 async def _load(db: AsyncSession) -> PolicySnapshot:
     th_rows = (
