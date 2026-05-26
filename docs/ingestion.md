@@ -25,8 +25,7 @@ flowchart LR
     src --> parse
     parse --> upsert[upsert_sanctioned_commodities<br/>sanctions/common.py:21]
     upsert --> embed[Embedder.encode_batch<br/>vector 384-dim]
-    upsert --> tsv[update_tsv_for_table<br/>description_tsv]
-    upsert --> sc[(sanctioned_commodity)]
+    upsert --> sc[(sanctioned_commodity<br/>bitemporal: sys_to IS NULL = current<br/>description_tsv GENERATED)]
     upsert --> cr[(country_rule)]
     parse --> ali[insert_aliases<br/>sanctions/common.py:171]
     ali --> sca[(sanctioned_commodity_alias)]
@@ -37,9 +36,12 @@ Three things are happening together in every ingester:
 1. A `RefdataRun` row is opened in `running` state, and is updated to
    `success` or `failed` by the `with_run_logging` context manager.
 2. The parser yields canonical row dicts.
-3. The shared upserter writes them with `ON CONFLICT DO NOTHING` against
-   the natural key, computes embeddings in batches, and refreshes the
-   `description_tsv` full-text vector.
+3. The shared upserter performs a content-hash-driven **bitemporal** upsert:
+   unchanged rows are a no-op, changed rows close the current version
+   (`sys_to = now()`) and open a new one, and rows that vanished from the feed
+   have their current version closed (logical delete, scoped to the source).
+   Embeddings are computed in batches only for new/changed rows;
+   `description_tsv` is a generated stored column, so no explicit refresh runs.
 
 ## Source matrix
 
@@ -80,7 +82,12 @@ effective_from    date                    -- nullable
 effective_to      date                    -- nullable
 provenance_url    text                    -- publisher URL
 embedding         vector(384)             -- BGE-small embedding of description
-description_tsv   tsvector                -- to_tsvector('english', description)
+embedding_model   text                    -- encoder that produced `embedding` (item 1)
+description_tsv   tsvector                -- GENERATED ALWAYS AS to_tsvector('simple', description) STORED
+commodity_id      bigint                  -- logical-commodity key (shared across versions)
+content_hash      bytea                   -- sha256 of audit-relevant fields (change detection)
+valid_from/to     timestamptz             -- application time (when in force, reality)
+sys_from/to       timestamptz             -- system time; current version == sys_to IS NULL
 created_at        timestamptz DEFAULT now()
 ```
 

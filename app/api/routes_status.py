@@ -183,12 +183,22 @@ async def refdata_status(db: Annotated[AsyncSession, Depends(db_session)]) -> di
 
 @router.get("/sanctions")
 async def sanctions_status(db: Annotated[AsyncSession, Depends(db_session)]) -> dict[str, Any]:
-    sanc_total = (await db.execute(select(func.count()).select_from(SanctionedCommodity))).scalar_one()
-    rules_total = (await db.execute(select(func.count()).select_from(CountryRule))).scalar_one()
+    # Count current versions only (bitemporal — migration 0009); historical
+    # row-versions exist for replay and must not inflate operational totals.
+    sanc_total = (
+        await db.execute(
+            select(func.count()).select_from(SanctionedCommodity).where(SanctionedCommodity.sys_to.is_(None))
+        )
+    ).scalar_one()
+    rules_total = (
+        await db.execute(select(func.count()).select_from(CountryRule).where(CountryRule.active.is_(True)))
+    ).scalar_one()
     by_source = dict(
         (
             await db.execute(
-                select(SanctionedCommodity.source, func.count()).group_by(SanctionedCommodity.source)
+                select(SanctionedCommodity.source, func.count())
+                .where(SanctionedCommodity.sys_to.is_(None))
+                .group_by(SanctionedCommodity.source)
             )
         ).all()
     )

@@ -39,6 +39,7 @@ async def by_country_pair(
                 FROM sanctioned_commodity sc
                 JOIN country_rule cr ON cr.sanctioned_commodity_id = sc.id
                 WHERE cr.active = true
+                  AND sc.sys_to IS NULL
                   AND (cr.origin_iso IS NULL OR cr.origin_iso = :origin OR :origin IS NULL)
                   AND (cr.destination_iso IS NULL OR cr.destination_iso = :destination OR :destination IS NULL)
                 ORDER BY sc.source, sc.source_record_id

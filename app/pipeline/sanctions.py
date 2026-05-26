@@ -36,6 +36,10 @@ _EFFECTIVE_DATE_CLAUSE = (
     "AND (sc.effective_to   IS NULL OR sc.effective_to   >= CURRENT_DATE)"
 )
 
+# Bitemporal hot path: screen only the current version of each commodity
+# (migration 0009). Historical versions exist solely for point-in-time replay.
+_CURRENT_VERSION_CLAUSE = "AND sc.sys_to IS NULL"
+
 STRUCTURED_QUERY = text(
     f"""
     SELECT
@@ -49,6 +53,7 @@ STRUCTURED_QUERY = text(
       AND (cr.destination_iso IS NULL OR cr.destination_iso = :destination)
       AND sc.hs_codes && CAST(:codes AS varchar[])
       {_EFFECTIVE_DATE_CLAUSE}
+      {_CURRENT_VERSION_CLAUSE}
     LIMIT :k
     """
 )
@@ -61,6 +66,7 @@ DENSE_QUERY = text(
     FROM sanctioned_commodity sc
     WHERE sc.embedding IS NOT NULL
       {_EFFECTIVE_DATE_CLAUSE}
+      {_CURRENT_VERSION_CLAUSE}
       AND EXISTS (
         SELECT 1 FROM country_rule cr
         WHERE cr.sanctioned_commodity_id = sc.id
@@ -77,10 +83,11 @@ SPARSE_QUERY = text(
     f"""
     SELECT sc.id, sc.source, sc.source_record_id, sc.description, sc.hs_codes,
            sc.restriction_type, sc.provenance_url,
-           ts_rank_cd(sc.description_tsv, plainto_tsquery('english', :q)) AS rank
+           ts_rank_cd(sc.description_tsv, plainto_tsquery('simple', :q)) AS rank
     FROM sanctioned_commodity sc
-    WHERE sc.description_tsv @@ plainto_tsquery('english', :q)
+    WHERE sc.description_tsv @@ plainto_tsquery('simple', :q)
       {_EFFECTIVE_DATE_CLAUSE}
+      {_CURRENT_VERSION_CLAUSE}
       AND EXISTS (
         SELECT 1 FROM country_rule cr
         WHERE cr.sanctioned_commodity_id = sc.id
@@ -108,6 +115,7 @@ ALIAS_QUERY = text(
     WHERE a.alias %% :q
       AND similarity(a.alias, :q) >= :min_sim
       {_EFFECTIVE_DATE_CLAUSE}
+      {_CURRENT_VERSION_CLAUSE}
     GROUP BY sc.id
     ORDER BY sim DESC
     LIMIT :k

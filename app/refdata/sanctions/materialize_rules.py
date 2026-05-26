@@ -174,7 +174,10 @@ async def _fetch_source_data(
                 SanctionedCommodity.source,
                 SanctionedCommodity.source_record_id,
                 SanctionedCommodity.description,
-            ).where(SanctionedCommodity.source == source)
+            ).where(
+                SanctionedCommodity.source == source,
+                SanctionedCommodity.sys_to.is_(None),
+            )
         )
     ).all()
     commodities = [

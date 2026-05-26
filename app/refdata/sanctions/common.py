@@ -1,12 +1,16 @@
-"""Shared helpers for sanction-source ingesters: upsert + companion country_rule rows."""
+"""Shared helpers for sanction-source ingesters: bitemporal upsert + country_rule rows."""
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable
+from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db.models import (
     CountryRule,
     HsCode,
@@ -14,8 +18,79 @@ from app.db.models import (
     SanctionedCommodity,
     SanctionedCommodityAlias,
 )
-from app.refdata.common import batches, lazy_embedder, mark_progress, update_tsv_for_table
+from app.refdata.common import batches, lazy_embedder, mark_progress
 from app.telemetry import log
+
+
+def _canonical(value):
+    """Deterministic, JSON-serializable projection for content hashing."""
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_canonical(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _canonical(value[k]) for k in sorted(value)}
+    return value
+
+
+def content_hash(row: dict) -> bytes:
+    """SHA-256 over the audit-relevant fields of a source row.
+
+    Drives bitemporal change detection: a row whose hash is unchanged is skipped;
+    a changed hash closes the current version and opens a new one. The embedding is
+    excluded (it is derived from `description`, which is hashed). hs_codes are sorted
+    so list-order churn is not mistaken for a real change.
+    """
+    payload = {
+        "description": row.get("description") or "",
+        "hs_codes": sorted(row.get("hs_codes") or []),
+        "restriction_type": row.get("restriction_type"),
+        "effective_from": row.get("effective_from"),
+        "effective_to": row.get("effective_to"),
+        "provenance_url": row.get("provenance_url"),
+        "program_tag": row.get("program_tag"),
+        "country_rules": sorted(
+            (
+                {
+                    "origin_iso": cr.get("origin_iso"),
+                    "destination_iso": cr.get("destination_iso"),
+                    "restriction_type": cr.get("restriction_type"),
+                    "conditions": cr.get("conditions"),
+                }
+                for cr in (row.get("country_rules") or [])
+            ),
+            key=lambda d: json.dumps(_canonical(d), sort_keys=True),
+        ),
+    }
+    blob = json.dumps(_canonical(payload), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).digest()
+
+
+async def _replace_country_rules(db: AsyncSession, commodity_pk: int, row: dict) -> int:
+    """Point the row's country_rules at the live version `commodity_pk`.
+
+    Deletes any rules already attached to this version (none for a brand-new
+    version) and inserts the desired set. Returns the number inserted.
+    """
+    await db.execute(
+        CountryRule.__table__.delete().where(CountryRule.sanctioned_commodity_id == commodity_pk)
+    )
+    n = 0
+    for rule in row.get("country_rules") or []:
+        await db.execute(
+            insert(CountryRule)
+            .values(
+                origin_iso=rule.get("origin_iso"),
+                destination_iso=rule.get("destination_iso"),
+                sanctioned_commodity_id=commodity_pk,
+                restriction_type=rule.get("restriction_type") or row.get("restriction_type"),
+                conditions=rule.get("conditions"),
+                active=True,
+            )
+            .on_conflict_do_nothing(constraint="uq_country_rule")
+        )
+        n += 1
+    return n
 
 
 async def upsert_sanctioned_commodities(
@@ -24,28 +99,63 @@ async def upsert_sanctioned_commodities(
     source: str,
     run: RefdataRun | None = None,
 ) -> dict[str, int]:
-    """Upsert sanctioned_commodity rows, embedding descriptions in batches.
+    """Content-hash-driven bitemporal upsert into sanctioned_commodity (item 7).
 
-    Each input row supports: source_record_id, description, hs_codes (list of 6-digit strings),
-    restriction_type, effective_from, effective_to, provenance_url, and an optional
-    list of country_rules: [{origin_iso, destination_iso, restriction_type, conditions}].
-    Returns counts.
+    Each input row supports: source_record_id, description, hs_codes (list of 6-digit
+    strings), restriction_type, effective_from, effective_to, provenance_url,
+    program_tag, and an optional list of country_rules.
 
-    Idempotency: relies on `uq_sanctioned_commodity_source_recid` and `uq_country_rule`
-    (migration 0005). Rows with NULL source_record_id are inserted each run because
-    Postgres treats NULL as distinct in unique constraints — those rows have no
-    stable identity to dedupe against.
+    For every row keyed by (source, source_record_id): unchanged content is a no-op;
+    changed content closes the current version (sets sys_to=now()) and opens a new one
+    sharing the same commodity_id; a never-seen key inserts a new logical commodity.
+    Rows present in the DB but absent from this refresh are logically deleted by
+    closing their current version — scoped `AND source = :source` so one source's
+    refresh never closes another source's rows. description_tsv is a generated column
+    (migration 0009), so no explicit tsvector maintenance is needed here.
     """
     if not rows:
         return {"sanctioned": 0, "rules": 0}
     embedder = lazy_embedder()
-    n_sanctioned = 0
+    model_name = settings.embedder_model
+    n_changed = 0
     n_rules = 0
+    seen_recids: list[str] = []
+
     for batch in batches(rows, 64):
-        descs = [r["description"] for r in batch]
-        vectors = embedder.encode_batch(descs)
-        for r, v in zip(batch, vectors, strict=True):
-            stmt = insert(SanctionedCommodity).values(
+        # Resolve current state for the batch's keyed rows first; only embed the
+        # rows that are new or whose content changed.
+        to_embed: list[dict] = []
+        for r in batch:
+            recid = r.get("source_record_id")
+            if recid is not None:
+                seen_recids.append(recid)
+            h = content_hash(r)
+            r["_hash"] = h
+            current = (
+                await db.execute(
+                    select(SanctionedCommodity.id, SanctionedCommodity.commodity_id, SanctionedCommodity.content_hash).where(
+                        SanctionedCommodity.source == source,
+                        SanctionedCommodity.source_record_id.is_not_distinct_from(recid),
+                        SanctionedCommodity.sys_to.is_(None),
+                    )
+                )
+            ).first()
+            r["_current"] = current
+            if current is None or bytes(current.content_hash or b"") != h:
+                to_embed.append(r)
+
+        vectors = embedder.encode_batch([r["description"] for r in to_embed]) if to_embed else []
+        for r, v in zip(to_embed, vectors, strict=True):
+            current = r["_current"]
+            commodity_id = current.commodity_id if current is not None else None
+            if current is not None:
+                # Close the stale version.
+                await db.execute(
+                    update(SanctionedCommodity)
+                    .where(SanctionedCommodity.id == current.id)
+                    .values(sys_to=func.now())
+                )
+            values = dict(
                 source=source,
                 source_record_id=r.get("source_record_id"),
                 description=r["description"],
@@ -54,45 +164,55 @@ async def upsert_sanctioned_commodities(
                 effective_from=r.get("effective_from"),
                 effective_to=r.get("effective_to"),
                 provenance_url=r.get("provenance_url"),
+                program_tag=r.get("program_tag"),
                 embedding=v.tolist(),
+                embedding_model=model_name,
+                content_hash=r["_hash"],
             )
-            stmt = stmt.on_conflict_do_nothing(
-                constraint="uq_sanctioned_commodity_source_recid"
-            )
-            await db.execute(stmt)
-            n_sanctioned += 1
+            if commodity_id is not None:
+                values["commodity_id"] = commodity_id  # new version of an existing commodity
+            new_pk = (
+                await db.execute(
+                    insert(SanctionedCommodity).values(**values).returning(SanctionedCommodity.id)
+                )
+            ).scalar_one()
+            n_changed += 1
+            n_rules += await _replace_country_rules(db, new_pk, r)
 
-            # Look up the row we just inserted (by source + source_record_id) to attach country_rules.
-            if r.get("country_rules") and r.get("source_record_id"):
-                got = (
-                    await db.execute(
-                        select(SanctionedCommodity.id).where(
-                            SanctionedCommodity.source == source,
-                            SanctionedCommodity.source_record_id == r["source_record_id"],
-                        )
-                    )
-                ).scalar_one_or_none()
-                if got is None:
-                    continue
-                for rule in r["country_rules"]:
-                    cr = insert(CountryRule).values(
-                        origin_iso=rule.get("origin_iso"),
-                        destination_iso=rule.get("destination_iso"),
-                        sanctioned_commodity_id=got,
-                        restriction_type=rule.get("restriction_type") or r.get("restriction_type"),
-                        conditions=rule.get("conditions"),
-                        active=True,
-                    ).on_conflict_do_nothing(constraint="uq_country_rule")
-                    await db.execute(cr)
-                    n_rules += 1
         if run is not None:
-            await mark_progress(db, run, n_sanctioned)
+            await mark_progress(db, run, n_changed)
         else:
             await db.commit()
-        log.info("sanctions.upsert_progress", source=source, sanctioned=n_sanctioned, rules=n_rules)
-    await update_tsv_for_table(db, "sanctioned_commodity", columns=("description",))
+        log.info("sanctions.upsert_progress", source=source, changed=n_changed, rules=n_rules)
+
+    # Logical delete: close current versions for this source that vanished from the
+    # feed. Guarded on having seen stable record IDs — a feed of only NULL-id rows
+    # must not close the source's keyed history.
+    closed_ids: list[int] = []
+    if seen_recids:
+        closed = await db.execute(
+            text(
+                """
+                UPDATE sanctioned_commodity
+                   SET sys_to = now()
+                 WHERE source = :source
+                   AND sys_to IS NULL
+                   AND source_record_id IS NOT NULL
+                   AND NOT (source_record_id = ANY(:recids))
+                RETURNING id
+                """
+            ),
+            {"source": source, "recids": seen_recids},
+        )
+        closed_ids = [row[0] for row in closed.fetchall()]
+    if closed_ids:
+        await db.execute(
+            update(CountryRule)
+            .where(CountryRule.sanctioned_commodity_id.in_(closed_ids))
+            .values(active=False)
+        )
     await db.commit()
-    return {"sanctioned": n_sanctioned, "rules": n_rules}
+    return {"sanctioned": n_changed, "rules": n_rules, "closed": len(closed_ids)}
 
 
 def normalize_cn_code(raw: str | None) -> str | None:
@@ -188,6 +308,7 @@ async def insert_aliases(
             select(SanctionedCommodity.id).where(
                 SanctionedCommodity.source == source,
                 SanctionedCommodity.source_record_id == source_record_id,
+                SanctionedCommodity.sys_to.is_(None),
             )
         )
     ).scalar_one_or_none()

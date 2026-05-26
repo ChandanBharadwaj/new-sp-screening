@@ -299,7 +299,9 @@ async def list_sources(db: Annotated[AsyncSession, Depends(db_session)]) -> dict
     train_by_source = {s: int(n) for s, n in train_by_source_rows}
     sanc_by_source_rows = (
         await db.execute(
-            select(SanctionedCommodity.source, func.count()).group_by(SanctionedCommodity.source)
+            select(SanctionedCommodity.source, func.count())
+            .where(SanctionedCommodity.sys_to.is_(None))
+            .group_by(SanctionedCommodity.source)
         )
     ).all()
     sanc_by_source = {s: int(n) for s, n in sanc_by_source_rows}
@@ -716,7 +718,10 @@ async def _counts_for_lists(db: AsyncSession, names: list[str]) -> tuple[dict[st
     sanc_rows = (
         await db.execute(
             select(SanctionedCommodity.source, func.count())
-            .where(SanctionedCommodity.source.in_(sources))
+            .where(
+                SanctionedCommodity.source.in_(sources),
+                SanctionedCommodity.sys_to.is_(None),
+            )
             .group_by(SanctionedCommodity.source)
         )
     ).all()
@@ -873,13 +878,25 @@ async def delete_keyword_list(
 ) -> dict[str, Any]:
     _validate_list_name(name)
     source = keyword_list_ingest.source_key(name)
-    # Drop all sanctioned_commodity rows for this list (CASCADE clears country_rule
-    # + aliases). The materializer's orphan path then soft-deactivates the rules
-    # — call it explicitly here since no re-ingest will follow.
-    await db.execute(
-        text("DELETE FROM sanctioned_commodity WHERE source = :s"),
+    # Logically delete this list's commodities: close the current version of each
+    # row (bitemporal — migration 0009) so screening stops matching while history
+    # is preserved for replay. Companion country_rule rows are deactivated.
+    closed = await db.execute(
+        text(
+            "UPDATE sanctioned_commodity SET sys_to = now() "
+            "WHERE source = :s AND sys_to IS NULL RETURNING id"
+        ),
         {"s": source},
     )
+    closed_ids = [row[0] for row in closed.fetchall()]
+    if closed_ids:
+        await db.execute(
+            text(
+                "UPDATE country_rule SET active = false "
+                "WHERE sanctioned_commodity_id = ANY(:ids)"
+            ),
+            {"ids": closed_ids},
+        )
     # Disable materialization for the source.
     cfg = (
         await db.execute(

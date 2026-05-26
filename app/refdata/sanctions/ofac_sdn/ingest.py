@@ -104,6 +104,7 @@ async def main_async(sdn_file: Path, add_file: Path | None, alt_file: Path | Non
                     select(SanctionedCommodity.id).where(
                         SanctionedCommodity.source == "OFAC_SDN",
                         SanctionedCommodity.source_record_id == r["source_record_id"],
+                        SanctionedCommodity.sys_to.is_(None),
                     )
                 )
             ).scalar_one_or_none()

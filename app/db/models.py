@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     Numeric,
     SmallInteger,
     String,
@@ -72,15 +73,20 @@ class HsTrainingExample(Base):
 
 
 class SanctionedCommodity(Base):
+    """Bitemporal sanctions/commodity-restriction row (migration 0009).
+
+    Each logical commodity is identified by `commodity_id`; amendments produce a
+    new row-version (the prior version's `sys_to` is closed) rather than an
+    in-place update. The current version of every commodity is the row with
+    `sys_to IS NULL`. The temporal EXCLUDE constraint, the partial-unique current
+    index (uq_sanctioned_commodity_current, NULLS NOT DISTINCT), the generated
+    description_tsv, and the current-only HNSW index are all defined in migration
+    0009 and DB-managed.
+    """
+
     __tablename__ = "sanctioned_commodity"
-    __table_args__ = (
-        UniqueConstraint(
-            "source",
-            "source_record_id",
-            name="uq_sanctioned_commodity_source_recid",
-        ),
-    )
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    commodity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     source_record_id: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, nullable=False)
@@ -90,6 +96,14 @@ class SanctionedCommodity(Base):
     effective_to: Mapped[date | None] = mapped_column(Date)
     provenance_url: Mapped[str | None] = mapped_column(Text)
     embedding = mapped_column(Vector(EMBED_DIM), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(Text)
+    program_tag: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[bytes | None] = mapped_column(LargeBinary)
+    # Bitemporal: NULL upper bound == open/infinity. Current version == sys_to IS NULL.
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sys_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sys_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     description_tsv = mapped_column(TSVECTOR, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
