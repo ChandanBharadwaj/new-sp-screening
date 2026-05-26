@@ -132,13 +132,12 @@ class CountryRule(Base):
 
 
 class SanctionedCommodityAlias(Base):
-    """Alias / AKA / transliteration row joined to a sanctioned commodity.
+    """Alias / AKA / alternate trade-name row joined to a sanctioned commodity.
 
-    Populated by ingesters that publish multiple names per entity (notably OFAC SDN's
-    `alt.csv`). The trgm GIN index on `alias` powers fast fuzzy lookup at screening
-    time without forcing each ingester to denormalize aliases into the main
-    description column. The unique constraint on (parent, alias) makes ingester
-    re-runs idempotent via ON CONFLICT DO NOTHING.
+    Populated by ingesters that publish alternate descriptions for a commodity. The
+    trgm GIN index on `alias` powers fast fuzzy lookup at screening time without
+    forcing each ingester to denormalize aliases into the main description column.
+    The unique constraint on (parent, alias) makes ingester re-runs idempotent.
     """
 
     __tablename__ = "sanctioned_commodity_alias"
@@ -387,7 +386,7 @@ class KeywordList(Base):
 class SanctionsRuleConfig(Base):
     """Per-source toggle + tuning for the ScreeningRule materializer.
 
-    One row per sanctions source key (e.g. 'OFAC_SDN', 'IRAN'). When `enabled`,
+    One row per sanctions source key (e.g. 'BIS_CCL', 'IRAN'). When `enabled`,
     `app.refdata.sanctions.materialize_rules` upserts ScreeningRule rows derived
     from the source's `sanctioned_commodity` + `country_rule` data after each
     ingest. Off by default so flipping a source on is a deliberate operator action.

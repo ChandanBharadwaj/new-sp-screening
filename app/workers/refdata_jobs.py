@@ -19,12 +19,9 @@ from app.refdata.keyword_lists import ingest as keyword_list_ingest
 from app.refdata.sanctions import materialize_rules
 from app.refdata.sanctions.bis_ccl import ingest as bis_ingest
 from app.refdata.sanctions.country_program import ingest as country_ingest
-from app.refdata.sanctions.eu_consolidated import ingest as eu_cons
 from app.refdata.sanctions.eu_dual_use import ingest as eu_du
 from app.refdata.sanctions.eu_russia import ingest as eu_ru
 from app.refdata.sanctions.itar import ingest as itar_ingest
-from app.refdata.sanctions.ofac_sdn import ingest as ofac_ingest
-from app.refdata.sanctions.un import ingest as un_ingest
 from app.refdata.schedule_b import ingest as sb_ingest
 from app.refdata.wco import ingest as wco_ingest
 from app.telemetry import log
@@ -34,20 +31,20 @@ KEYWORD_LIST_PREFIX = keyword_list_ingest.SOURCE_PREFIX  # "KW:"
 # Keys that route through a sanctions ingester and produce sanctioned_commodity
 # rows. After ingest we re-materialize ScreeningRule rows from these (gated by
 # sanctions_rule_config.enabled — no-op when off).
+# Commodity-focused sources only. Party screening (OFAC SDN, EU/UN consolidated
+# financial-sanctions party lists) is out of scope for this engine and is handled
+# by a separate dedicated party-screening system — see README and docs/sanctions-sources.md.
 SANCTIONS_SOURCES = frozenset(
     {
         "EU_DUAL_USE",
         "EU_RUSSIA",
         "BIS_CCL",
-        "OFAC_SDN",
         "ITAR_USML",
         "IRAN",
         "DPRK",
         "SYRIA",
         "CUBA",
         "VENEZUELA",
-        "UN_CONSOLIDATED",
-        "EU_CONSOLIDATED",
     }
 )
 
@@ -108,12 +105,6 @@ async def run_refdata(ctx: dict, source: str, params: dict[str, Any]) -> dict:
                 _pathy(params.get("ccl_file")) or Path("data/sanctions/bis_ccl.csv"),
                 _pathy(params.get("crosswalk_file")),
             )
-        elif source == "OFAC_SDN":
-            await ofac_ingest.main_async(
-                _pathy(params.get("sdn")) or Path("data/sanctions/ofac/sdn.csv"),
-                _pathy(params.get("add")) or Path("data/sanctions/ofac/add.csv"),
-                _pathy(params.get("alt")) or Path("data/sanctions/ofac/alt.csv"),
-            )
         elif source == "ITAR_USML":
             await itar_ingest.main_async(
                 _pathy(params.get("file")) or Path("data/sanctions/itar/usml.csv")
@@ -123,12 +114,6 @@ async def run_refdata(ctx: dict, source: str, params: dict[str, Any]) -> dict:
             # Default file path follows the SOURCES catalog: <slug>.yaml.
             default = Path(f"data/sanctions/country_program/{source.lower()}.yaml")
             await country_ingest.main_async(_pathy(params.get("file")) or default)
-        elif source == "UN_CONSOLIDATED":
-            await un_ingest.main_async(_pathy(params.get("file")), download=True)
-        elif source == "EU_CONSOLIDATED":
-            await eu_cons.main_async(
-                _pathy(params.get("file")) or Path("data/sanctions/eu_consolidated.xml")
-            )
         elif source.startswith(KEYWORD_LIST_PREFIX):
             # Operator-authored keyword list. The portion after the prefix is the
             # manifest's `name`; the ingester re-loads scope/threshold from the DB.

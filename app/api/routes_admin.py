@@ -167,20 +167,6 @@ SOURCES: list[dict[str, Any]] = [
         "publisher_url": "https://www.bis.doc.gov/index.php/regulations/commerce-control-list-ccl",
     },
     {
-        "source": "OFAC_SDN",
-        "label": "US Treasury OFAC Specially Designated Nationals (SDN)",
-        "kind": "sanctions",
-        "auto_download": False,
-        "files": [
-            {"key": "sdn", "label": "sdn.csv", "path": "data/sanctions/ofac/sdn.csv", "accept": ".csv"},
-            {"key": "add", "label": "add.csv (addresses)", "path": "data/sanctions/ofac/add.csv", "accept": ".csv", "optional": True},
-            {"key": "alt", "label": "alt.csv (aliases)", "path": "data/sanctions/ofac/alt.csv", "accept": ".csv", "optional": True},
-        ],
-        "params_schema": {},
-        "depends_on": [],
-        "publisher_url": "https://sanctionslist.ofac.treas.gov/Home/SdnList",
-    },
-    {
         "source": "ITAR_USML",
         "label": "US Munitions List (ITAR, 22 CFR § 121)",
         "kind": "sanctions",
@@ -251,28 +237,6 @@ SOURCES: list[dict[str, Any]] = [
         "params_schema": {},
         "depends_on": ["HTS"],
         "publisher_url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-V/part-591",
-    },
-    {
-        "source": "UN_CONSOLIDATED",
-        "label": "UN Consolidated Sanctions List",
-        "kind": "sanctions",
-        "auto_download": True,
-        "files": [],
-        "params_schema": {},
-        "depends_on": [],
-        "publisher_url": "https://main.un.org/securitycouncil/en/sanctions/un-sc-consolidated-list",
-    },
-    {
-        "source": "EU_CONSOLIDATED",
-        "label": "EU Consolidated Financial Sanctions",
-        "kind": "sanctions",
-        "auto_download": False,
-        "files": [
-            {"key": "file", "label": "FSF XML", "path": "data/sanctions/eu_consolidated.xml", "accept": ".xml"},
-        ],
-        "params_schema": {},
-        "depends_on": [],
-        "publisher_url": "https://webgate.ec.europa.eu/europeaid/fsd/fsf/public/",
     },
 ]
 

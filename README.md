@@ -102,7 +102,7 @@ These constraints are non-negotiable and shape every design decision in this doc
 ### FR2 — Sanctioned-Goods Reference Data
 
 - FR2.1 — Maintain a normalized database of sanctioned/restricted commodities, each record carrying: source, free-text description, embedding, vector of applicable HS codes, country-pair scope, restriction type, effective dates, provenance URL.
-- FR2.2 — Ingest from: US BIS Commerce Control List, US OFAC SDN + sectoral, US ITAR/USML, EU Consolidated Sanctions, EU Dual-Use Regulation Annex I, UN Consolidated List, country-specific regimes (Russia, Iran, DPRK, Syria, Cuba, Venezuela).
+- FR2.2 — Ingest from commodity-focused sources only: US BIS Commerce Control List, US ITAR/USML, EU Dual-Use Regulation Annex I, EU Russia annexes, and country-specific commodity regimes (Iran, DPRK, Syria, Cuba, Venezuela). Party/entity lists (OFAC SDN, EU/UN consolidated financial-sanctions lists) are out of scope — see "Out of scope (v1)" — and handled by the separate party-screening system.
 - FR2.3 — Country-pair constraints stored as `(origin_iso, destination_iso, sanctioned_commodity_id, restriction_type, conditions)`.
 - FR2.4 — Automated refresh pipelines: sanctions weekly, HS schedule annually.
 

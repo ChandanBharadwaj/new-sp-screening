@@ -9,7 +9,7 @@ parser and target table — but they share a small set of helpers and the
 
 ```mermaid
 flowchart LR
-    src[(Upstream publisher<br/>OFAC / EU / UN / BIS / ITAR<br/>HTS / WCO / CROSS / Schedule B<br/>country-program YAML)]
+    src[(Upstream publisher<br/>BIS / ITAR / EU dual-use / EU Russia<br/>HTS / WCO / CROSS / Schedule B<br/>country-program YAML)]
 
     cli[CLI:<br/>python -m app.refdata.&lt;source&gt;.ingest]
     api[POST /api/v1/refdata/run]
@@ -53,10 +53,7 @@ Three things are happening together in every ingester:
 | `CROSS` | HTML (CBP rulings) | `hs_training_example` | same | `app/refdata/cross/scraper.py` + `ingest.py` |
 | `HsEntityIndex` | Derived via GLiNER NER over `hs_code` | `hs_entity_index` | `(hs_code, entity_type, entity_value)` PK | `app/refdata/hs_entities/build.py` |
 | `GoldAssembly` | Derived from `hs_training_example` | files at `eval/gold/splits/*.jsonl` | n/a (file overwrite) | `app/refdata/gold/assemble.py` |
-| `OFAC_SDN` | CSV (sdn.csv, add.csv, alt.csv) | `sanctioned_commodity` + `sanctioned_commodity_alias` | `uq_sanctioned_commodity_source_recid` | `app/refdata/sanctions/ofac_sdn/ingest.py` |
-| `EU_CONSOLIDATED` | XML (FSF) | `sanctioned_commodity` + aliases | same | `app/refdata/sanctions/eu_consolidated/ingest.py` |
-| `UN_CONSOLIDATED` | XML | `sanctioned_commodity` + aliases | same | `app/refdata/sanctions/un/ingest.py` |
-| `EU_DUAL_USE` | XLSX + crosswalk XLSX | `sanctioned_commodity` + `country_rule` | same | `app/refdata/sanctions/eu_dual_use/ingest.py` |
+| `EU_DUAL_USE` | XLSX + crosswalk XLSX | `sanctioned_commodity` + `country_rule` | current-version partial unique on `(source, source_record_id)` | `app/refdata/sanctions/eu_dual_use/ingest.py` |
 | `EU_RUSSIA` | XLSX per annex | `sanctioned_commodity` + `country_rule` | same | `app/refdata/sanctions/eu_russia/ingest.py` |
 | `BIS_CCL` | CSV + HS crosswalk | `sanctioned_commodity` | same | `app/refdata/sanctions/bis_ccl/ingest.py` |
 | `ITAR_USML` | CSV (extracted from PDF) | `sanctioned_commodity` | same | `app/refdata/sanctions/itar/ingest.py` |
@@ -73,7 +70,7 @@ file expectations, what's intentionally skipped — lives in the existing
 
 ```text
 id                bigserial PRIMARY KEY
-source            varchar(32) NOT NULL    -- "OFAC_SDN" | "EU_DUAL_USE" | "BIS_CCL" | ...
+source            varchar(32) NOT NULL    -- "BIS_CCL" | "EU_DUAL_USE" | "ITAR_USML" | ...
 source_record_id  text                    -- external stable id (idempotency component)
 description       text NOT NULL           -- normalized human description (≤2000 chars)
 hs_codes          varchar(10)[]           -- array of 6-digit subheadings (post expansion)
@@ -233,7 +230,7 @@ Three entry points, all eventually call the same `main_async`:
 The dispatch table in `app/workers/refdata_jobs.py` is the source of
 truth for which `source` strings the system accepts and which optional
 parameters each one takes (e.g., `EU_RUSSIA` accepts `direction` and
-`annex`, `OFAC_SDN` accepts `sdn`/`add`/`alt` paths).
+`annex`, `BIS_CCL` accepts `ccl_file`/`crosswalk_file` paths).
 
 ## Idempotency in one paragraph
 

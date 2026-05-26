@@ -232,8 +232,8 @@ async def _fetch_source_data(
         )
     # Commodities with no country_rule still produce one global-scope rule
     # (origin=None, destination=None) so the cross-encoder can fire on
-    # source records that ship without a country_rule companion (e.g. OFAC SDN
-    # entries published as party-only, BIS CCL entries without HS crosswalk).
+    # source records that ship without a country_rule companion (e.g. BIS CCL
+    # entries without an HS crosswalk).
     for c in commodities:
         crs_by_cid.setdefault(c["id"], [{"origin_iso": None, "destination_iso": None, "restriction_type": None, "conditions": None}])
 
